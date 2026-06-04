@@ -1,6 +1,6 @@
-import type { Address } from "viem";
 import type {
   ApiKeyStatus,
+  ChainAddress,
   ChainCursor,
   DepositAddress,
   GasTopUp,
@@ -43,8 +43,8 @@ function assetKey(network: NetworkSlug, token: TokenSymbol): string {
   return `${network}:${token}`;
 }
 
-function addressKey(network: NetworkSlug, token: TokenSymbol, address: Address): string {
-  return `${assetKey(network, token)}:${address.toLowerCase()}`;
+function addressKey(network: NetworkSlug, token: TokenSymbol, address: ChainAddress): string {
+  return `${assetKey(network, token)}:${address}`;
 }
 
 export class MemoryRepository implements Repository {
@@ -211,7 +211,7 @@ export class MemoryRepository implements Repository {
   async getDepositAddressByAddress(
     network: NetworkSlug,
     token: TokenSymbol,
-    address: Address
+    address: ChainAddress
   ): Promise<DepositAddress | null> {
     const id = this.depositAddressesByAddress.get(addressKey(network, token, address));
     return clone(id ? (this.depositAddresses.get(id) ?? null) : null);
@@ -336,7 +336,7 @@ export class MemoryRepository implements Repository {
   async updateGasTopUpStatus(
     id: string,
     status: TransactionStatus,
-    txHash: `0x${string}` | null,
+    txHash: string | null,
     failureReason?: string | null
   ): Promise<GasTopUp | null> {
     const topUp = this.gasTopUps.get(id);
@@ -379,7 +379,7 @@ export class MemoryRepository implements Repository {
   async updateSweepStatus(
     id: string,
     status: TransactionStatus,
-    txHash: `0x${string}` | null,
+    txHash: string | null,
     failureReason?: string | null
   ): Promise<Sweep | null> {
     const sweep = this.sweeps.get(id);

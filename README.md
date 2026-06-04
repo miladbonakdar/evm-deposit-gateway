@@ -1,14 +1,14 @@
 # EVM Deposit Gateway
 
-API-only Hono + TypeScript service for temporary USDT/USDC deposit addresses on configured EVM networks.
+API-only Hono + TypeScript service for temporary USDT/USDC deposit addresses on configured EVM and TRON networks.
 
-The service is intentionally API-only. It creates temporary merchant deposit wallets, watches ERC-20 `Transfer` logs, sends signed lifecycle webhooks, tops up native gas when needed, and sweeps token balances to configured treasury wallets.
+The service is intentionally API-only. It creates temporary merchant deposit wallets, watches ERC-20/TRC-20 `Transfer` activity, sends signed lifecycle webhooks, tops up native gas when needed, and sweeps token balances to configured treasury wallets.
 
 ## What it does
 
-EVM Deposit Gateway lets a merchant application request a temporary wallet address for an enabled token/network pair, such as USDT on Ethereum. A payer sends funds to that address. The worker detects the ERC-20 transfer, confirms it after the configured block depth, notifies the merchant by signed webhook, funds the temporary wallet with native gas if needed, and sweeps the full token balance to the merchant treasury wallet.
+EVM Deposit Gateway lets a merchant application request a temporary wallet address for an enabled token/network pair, such as USDT on Ethereum or TRON. A payer sends funds to that address. The worker detects the token transfer, confirms it after the configured block depth, notifies the merchant by signed webhook, funds the temporary wallet with native gas if needed, and sweeps the full token balance to the merchant treasury wallet.
 
-The v1 scope is deposits only. It does not provide exchange, withdrawal, customer account, custody UI, or Tron support.
+The v1 scope is deposits only. It does not provide exchange, withdrawal, customer account, or custody UI.
 
 ## Flow
 
@@ -16,7 +16,7 @@ The v1 scope is deposits only. It does not provide exchange, withdrawal, custome
 2. Admin creates a merchant API key and configures webhook + treasury wallets.
 3. Merchant calls `POST /v1/deposit-addresses` with HMAC-signed headers.
 4. API generates an encrypted temporary wallet and returns the public address plus optional QR output.
-5. Worker scans enabled ERC-20 `Transfer` logs and matches deposits to generated addresses.
+5. Worker scans enabled ERC-20/TRC-20 transfers and matches deposits to generated addresses.
 6. Worker emits lifecycle webhooks, tops up gas when required, and sweeps tokens to treasury.
 
 ## Features
@@ -25,8 +25,9 @@ The v1 scope is deposits only. It does not provide exchange, withdrawal, custome
 - HMAC-signed merchant requests with timestamp and nonce replay protection
 - AES-256-GCM encryption for generated private keys, API secrets, and webhook secrets
 - Postgres persistence through Drizzle ORM table definitions and checked-in SQL migrations
-- Config-driven EVM network/token support
-- `viem`-based address generation, log polling, gas top-ups, and token sweeps
+- Config-driven EVM and TRON network/token support
+- `viem` for EVM address generation, log polling, gas top-ups, and token sweeps
+- `tronweb` for TRON address generation, event polling, TRX top-ups, and TRC-20 sweeps
 - Signed webhook outbox with retries
 - OpenAPI JSON at `/openapi.json`
 
@@ -99,9 +100,9 @@ USDT_DECIMALS_ETHEREUM=6
 GAS_WALLET_PRIVATE_KEY_ETHEREUM=0x...
 ```
 
-The supported v1 mainnet slugs are `ethereum`, `bsc`, `polygon`, `arbitrum`, `optimism`, and `base`.
+The supported v1 mainnet slugs are `ethereum`, `bsc`, `polygon`, `arbitrum`, `optimism`, `base`, and `tron`.
 
-The supported v1 testnet slugs are `sepolia`, `bscTestnet`, `polygonAmoy`, `arbitrumSepolia`, `optimismSepolia`, and `baseSepolia`.
+The supported v1 testnet slugs are `sepolia`, `bscTestnet`, `polygonAmoy`, `arbitrumSepolia`, `optimismSepolia`, `baseSepolia`, and `nile`.
 
 ## Admin API
 

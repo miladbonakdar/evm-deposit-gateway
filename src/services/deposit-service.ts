@@ -1,5 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { generatePrivateKey } from "viem/accounts";
+import { TronWeb } from "tronweb";
 import { assertEnabledToken, type SupportedNetworks } from "../config/networks.js";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import type { Encryptor } from "../security/encryption.js";
@@ -29,7 +30,7 @@ export class DepositService {
   ) {}
 
   async createDepositAddress(input: CreateDepositAddressInput) {
-    assertEnabledToken(this.networks, input.network, input.token);
+    const { network: networkConfig } = assertEnabledToken(this.networks, input.network, input.token);
 
     const treasury = await this.repo.getTreasuryWallet(input.merchantId, input.network, input.token);
     if (!treasury) {
@@ -39,8 +40,7 @@ export class DepositService {
       );
     }
 
-    const privateKey = generatePrivateKey();
-    const account = privateKeyToAccount(privateKey);
+    const wallet = await generateWallet(networkConfig.kind);
     const ttlSeconds = input.ttlSeconds ?? 86_400;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
     const depositAddress = await this.repo.createDepositAddress({
@@ -48,8 +48,8 @@ export class DepositService {
       merchantId: input.merchantId,
       network: input.network,
       token: input.token,
-      address: normalizeAddress(account.address),
-      privateKeyEncrypted: this.encryptor.encryptString(privateKey),
+      address: normalizeAddress(networkConfig, wallet.address),
+      privateKeyEncrypted: this.encryptor.encryptString(wallet.privateKey),
       expiresAt,
       externalId: input.externalId ?? null,
       metadata: input.metadata ?? {}
@@ -129,6 +129,17 @@ export class DepositService {
       responseBody
     });
   }
+}
+
+async function generateWallet(kind: "evm" | "tron"): Promise<{ address: string; privateKey: string }> {
+  if (kind === "evm") {
+    const privateKey = generatePrivateKey();
+    const account = privateKeyToAccount(privateKey);
+    return { address: account.address, privateKey };
+  }
+
+  const account = await TronWeb.createAccount();
+  return { address: account.address.base58, privateKey: account.privateKey };
 }
 
 export function publicDepositAddress(depositAddress: DepositAddress) {

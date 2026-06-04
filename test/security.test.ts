@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createTestEncryptor } from "./helpers.js";
+import { TronWeb } from "tronweb";
+import { loadSupportedNetworks } from "../src/config/networks.js";
+import { createTestEncryptor, testTronTokenAddress } from "./helpers.js";
 import { parseTokenAmount, formatTokenAmount } from "../src/utils/amount.js";
+import { normalizeTronAddress } from "../src/utils/address.js";
 import { buildQrResult } from "../src/utils/qr.js";
 import { buildCanonicalRequest, signCanonicalRequest, signRequest, timingSafeEqualHex } from "../src/security/hmac.js";
 
@@ -47,5 +50,20 @@ describe("security utilities", () => {
     expect(png.pngDataUrl).toMatch(/^data:image\/png;base64,/);
     expect(svg.svg).toContain("<svg");
     expect(base64.base64).not.toContain("data:image");
+  });
+
+  it("normalizes TRON addresses and TRON token configuration", () => {
+    const tronHexAddress = TronWeb.address.toHex(testTronTokenAddress);
+    const networks = loadSupportedNetworks({
+      RPC_URL_NILE: "https://api.nileex.io",
+      USDT_CONTRACT_NILE: `0x${tronHexAddress}`,
+      USDT_DECIMALS_NILE: "6"
+    });
+
+    expect(normalizeTronAddress(tronHexAddress)).toBe(testTronTokenAddress);
+    expect(normalizeTronAddress(`0x${tronHexAddress}`)).toBe(testTronTokenAddress);
+    expect(networks.nile?.kind).toBe("tron");
+    expect(networks.nile?.tokens.USDT?.contractAddress).toBe(testTronTokenAddress);
+    expect(networks.nile?.minGasWei).toBe(5_000_000n);
   });
 });

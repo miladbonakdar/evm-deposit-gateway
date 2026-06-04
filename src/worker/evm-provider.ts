@@ -5,52 +5,32 @@ import {
   http,
   parseAbiItem,
   type Address,
-  type Hex,
   type Log
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { NetworkConfig, TokenConfig } from "../config/networks.js";
-import type { NetworkSlug, TokenSymbol } from "../types/domain.js";
-
-export interface Erc20TransferLog {
-  network: NetworkSlug;
-  token: TokenSymbol;
-  txHash: Hex;
-  logIndex: number;
-  blockNumber: bigint;
-  blockHash: Hex | null;
-  from: Address;
-  to: Address;
-  value: bigint;
-}
-
-export interface TransactionReceiptSummary {
-  status: "success" | "reverted";
-  blockNumber: bigint;
-}
-
-export interface EvmProvider {
-  getLatestBlockNumber(network: NetworkConfig): Promise<bigint>;
-  getTransferLogs(network: NetworkConfig, token: TokenConfig, fromBlock: bigint, toBlock: bigint): Promise<Erc20TransferLog[]>;
-  getNativeBalance(network: NetworkConfig, address: Address): Promise<bigint>;
-  getTokenBalance(network: NetworkConfig, token: TokenConfig, address: Address): Promise<bigint>;
-  sendNativeTransfer(network: NetworkConfig, fromPrivateKey: Hex, to: Address, value: bigint): Promise<Hex>;
-  sendTokenTransfer(network: NetworkConfig, token: TokenConfig, fromPrivateKey: Hex, to: Address, value: bigint): Promise<Hex>;
-  getTransactionReceipt(network: NetworkConfig, txHash: Hex): Promise<TransactionReceiptSummary | null>;
-}
+import type { ChainProvider, TokenTransferLog, TransactionReceiptSummary } from "./chain-provider.js";
 
 const transferEvent = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
-export class ViemEvmProvider implements EvmProvider {
+export class ViemEvmProvider implements ChainProvider {
   private publicClient(network: NetworkConfig) {
+    if (network.kind !== "evm" || !network.chain) {
+      throw new Error(`${network.slug} is not an EVM network`);
+    }
+
     return createPublicClient({
       chain: network.chain,
       transport: http(network.rpcUrl)
     });
   }
 
-  private walletClient(network: NetworkConfig, privateKey: Hex) {
-    const account = privateKeyToAccount(privateKey);
+  private walletClient(network: NetworkConfig, privateKey: string) {
+    if (network.kind !== "evm" || !network.chain) {
+      throw new Error(`${network.slug} is not an EVM network`);
+    }
+
+    const account = privateKeyToAccount(privateKey as `0x${string}`);
     return {
       account,
       client: createWalletClient({
@@ -70,9 +50,9 @@ export class ViemEvmProvider implements EvmProvider {
     token: TokenConfig,
     fromBlock: bigint,
     toBlock: bigint
-  ): Promise<Erc20TransferLog[]> {
+  ): Promise<TokenTransferLog[]> {
     const logs = (await this.publicClient(network).getLogs({
-      address: token.contractAddress,
+      address: token.contractAddress as Address,
       event: transferEvent,
       fromBlock,
       toBlock
@@ -83,54 +63,54 @@ export class ViemEvmProvider implements EvmProvider {
       .map((log) => ({
         network: network.slug,
         token: token.symbol,
-        txHash: log.transactionHash as Hex,
+        txHash: log.transactionHash,
         logIndex: log.logIndex,
         blockNumber: log.blockNumber,
         blockHash: log.blockHash,
-        from: log.args.from as Address,
-        to: log.args.to as Address,
+        from: log.args.from as string,
+        to: log.args.to as string,
         value: log.args.value as bigint
       }));
   }
 
-  async getNativeBalance(network: NetworkConfig, address: Address): Promise<bigint> {
-    return this.publicClient(network).getBalance({ address });
+  async getNativeBalance(network: NetworkConfig, address: string): Promise<bigint> {
+    return this.publicClient(network).getBalance({ address: address as Address });
   }
 
-  async getTokenBalance(network: NetworkConfig, token: TokenConfig, address: Address): Promise<bigint> {
+  async getTokenBalance(network: NetworkConfig, token: TokenConfig, address: string): Promise<bigint> {
     return this.publicClient(network).readContract({
-      address: token.contractAddress,
+      address: token.contractAddress as Address,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [address]
+      args: [address as Address]
     });
   }
 
-  async sendNativeTransfer(network: NetworkConfig, fromPrivateKey: Hex, to: Address, value: bigint): Promise<Hex> {
+  async sendNativeTransfer(network: NetworkConfig, fromPrivateKey: string, to: string, value: bigint): Promise<string> {
     const { account, client } = this.walletClient(network, fromPrivateKey);
-    return client.sendTransaction({ account, to, value });
+    return client.sendTransaction({ account, to: to as Address, value });
   }
 
   async sendTokenTransfer(
     network: NetworkConfig,
     token: TokenConfig,
-    fromPrivateKey: Hex,
-    to: Address,
+    fromPrivateKey: string,
+    to: string,
     value: bigint
-  ): Promise<Hex> {
+  ): Promise<string> {
     const { account, client } = this.walletClient(network, fromPrivateKey);
     return client.writeContract({
       account,
-      address: token.contractAddress,
+      address: token.contractAddress as Address,
       abi: erc20Abi,
       functionName: "transfer",
-      args: [to, value]
+      args: [to as Address, value]
     });
   }
 
-  async getTransactionReceipt(network: NetworkConfig, txHash: Hex): Promise<TransactionReceiptSummary | null> {
+  async getTransactionReceipt(network: NetworkConfig, txHash: string): Promise<TransactionReceiptSummary | null> {
     const receipt = await this.publicClient(network)
-      .getTransactionReceipt({ hash: txHash })
+      .getTransactionReceipt({ hash: txHash as `0x${string}` })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name.includes("NotFound")) {
           return null;

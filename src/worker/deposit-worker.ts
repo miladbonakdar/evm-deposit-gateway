@@ -1,4 +1,3 @@
-import type { Hex } from "viem";
 import { assertEnabledToken, enabledNetworks, enabledTokens, type SupportedNetworks } from "../config/networks.js";
 import type { Encryptor } from "../security/encryption.js";
 import { formatTokenAmount } from "../utils/amount.js";
@@ -8,13 +7,13 @@ import type { Repository } from "../repositories/repository.js";
 import type { WebhookService } from "../services/webhook-service.js";
 import { publicDepositAddress, publicTransfer } from "../services/deposit-service.js";
 import type { GasTopUp, NetworkSlug, Sweep, TokenSymbol, TokenTransfer } from "../types/domain.js";
-import type { EvmProvider } from "./evm-provider.js";
+import type { ChainProvider } from "./chain-provider.js";
 
 export interface DepositWorkerDependencies {
   repo: Repository;
   networks: SupportedNetworks;
   encryptor: Encryptor;
-  evm: EvmProvider;
+  chainProvider: ChainProvider;
   webhooks: WebhookService;
 }
 
@@ -42,7 +41,7 @@ export class DepositWorker {
   private async scanEnabledAssets(): Promise<void> {
     for (const networkConfig of enabledNetworks(this.deps.networks)) {
       for (const tokenConfig of enabledTokens(networkConfig)) {
-        const latestBlock = await this.deps.evm.getLatestBlockNumber(networkConfig);
+        const latestBlock = await this.deps.chainProvider.getLatestBlockNumber(networkConfig);
         const confirmedHead = latestBlock - BigInt(networkConfig.confirmations);
         const cursor = await this.deps.repo.getChainCursor(networkConfig.slug, tokenConfig.symbol);
         const fromBlock = cursor ? cursor.lastScannedBlock + 1n : networkConfig.scanFromBlock;
@@ -52,13 +51,13 @@ export class DepositWorker {
           continue;
         }
 
-        const logs = await this.deps.evm.getTransferLogs(networkConfig, tokenConfig, fromBlock, toBlock);
+        const logs = await this.deps.chainProvider.getTransferLogs(networkConfig, tokenConfig, fromBlock, toBlock);
 
         for (const log of logs) {
           const depositAddress = await this.deps.repo.getDepositAddressByAddress(
             networkConfig.slug,
             tokenConfig.symbol,
-            normalizeAddress(log.to)
+            normalizeAddress(networkConfig, log.to)
           );
 
           if (!depositAddress) {
@@ -74,8 +73,8 @@ export class DepositWorker {
             token: tokenConfig.symbol,
             txHash: log.txHash,
             logIndex: log.logIndex,
-            fromAddress: normalizeAddress(log.from),
-            toAddress: normalizeAddress(log.to),
+            fromAddress: normalizeAddress(networkConfig, log.from),
+            toAddress: normalizeAddress(networkConfig, log.to),
             amountRaw: log.value.toString(10),
             amountFormatted: formatTokenAmount(log.value, tokenConfig.decimals),
             blockNumber: log.blockNumber,
@@ -104,7 +103,7 @@ export class DepositWorker {
   private async confirmPendingTransfers(): Promise<void> {
     for (const networkConfig of enabledNetworks(this.deps.networks)) {
       for (const tokenConfig of enabledTokens(networkConfig)) {
-        const latestBlock = await this.deps.evm.getLatestBlockNumber(networkConfig);
+        const latestBlock = await this.deps.chainProvider.getLatestBlockNumber(networkConfig);
         const confirmedHead = latestBlock - BigInt(networkConfig.confirmations);
         const transfers = await this.deps.repo.listTransfersReadyForConfirmation(
           networkConfig.slug,
@@ -144,7 +143,7 @@ export class DepositWorker {
         continue;
       }
 
-      const receipt = await this.deps.evm.getTransactionReceipt(network, topUp.txHash);
+      const receipt = await this.deps.chainProvider.getTransactionReceipt(network, topUp.txHash);
       if (!receipt) {
         continue;
       }
@@ -179,7 +178,7 @@ export class DepositWorker {
         continue;
       }
 
-      const receipt = await this.deps.evm.getTransactionReceipt(network, sweep.txHash);
+      const receipt = await this.deps.chainProvider.getTransactionReceipt(network, sweep.txHash);
       if (!receipt) {
         continue;
       }
@@ -209,7 +208,7 @@ export class DepositWorker {
       return;
     }
 
-    const nativeBalance = await this.deps.evm.getNativeBalance(network, depositAddress.address);
+    const nativeBalance = await this.deps.chainProvider.getNativeBalance(network, depositAddress.address);
     if (nativeBalance < network.minGasWei) {
       const existingTopUp = await this.deps.repo.getGasTopUpByTransfer(transfer.id);
       if (existingTopUp?.status === "confirmed") {
@@ -240,7 +239,7 @@ export class DepositWorker {
       }
 
       try {
-        const txHash = await this.deps.evm.sendNativeTransfer(
+        const txHash = await this.deps.chainProvider.sendNativeTransfer(
           network,
           network.gasWalletPrivateKey,
           depositAddress.address,
@@ -294,14 +293,14 @@ export class DepositWorker {
       return;
     }
 
-    const privateKey = this.deps.encryptor.decryptString(depositAddress.privateKeyEncrypted) as Hex;
-    const balance = await this.deps.evm.getTokenBalance(network, token, depositAddress.address);
+    const privateKey = this.deps.encryptor.decryptString(depositAddress.privateKeyEncrypted);
+    const balance = await this.deps.chainProvider.getTokenBalance(network, token, depositAddress.address);
     if (balance === 0n) {
       return;
     }
 
     try {
-      const txHash = await this.deps.evm.sendTokenTransfer(network, token, privateKey, treasury.address, balance);
+      const txHash = await this.deps.chainProvider.sendTokenTransfer(network, token, privateKey, treasury.address, balance);
       const { sweep, created } = await this.deps.repo.createSweepIfNotExists({
         id: newId(),
         transferId: transfer.id,

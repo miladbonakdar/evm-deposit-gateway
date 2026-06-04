@@ -1,22 +1,21 @@
 import { describe, expect, it } from "vitest";
-import type { Address, Hex } from "viem";
 import type { NetworkConfig, TokenConfig } from "../src/config/networks.js";
 import { MemoryRepository } from "../src/repositories/memory.js";
 import { DepositService } from "../src/services/deposit-service.js";
 import { MerchantService } from "../src/services/merchant-service.js";
 import { DefaultWebhookService } from "../src/services/webhook-service.js";
 import { DepositWorker } from "../src/worker/deposit-worker.js";
-import type { Erc20TransferLog, EvmProvider, TransactionReceiptSummary } from "../src/worker/evm-provider.js";
+import type { ChainProvider, TokenTransferLog, TransactionReceiptSummary } from "../src/worker/chain-provider.js";
 import { createTestConfig, testTreasuryAddress } from "./helpers.js";
 
-class MockEvmProvider implements EvmProvider {
+class MockChainProvider implements ChainProvider {
   latestBlock = 120n;
   nativeBalance = 10_000_000_000_000_000n;
   tokenBalance = 50_000_000n;
-  logs: Erc20TransferLog[] = [];
-  nativeTransfers: { to: Address; value: bigint }[] = [];
-  tokenTransfers: { to: Address; value: bigint }[] = [];
-  receipts = new Map<Hex, TransactionReceiptSummary>();
+  logs: TokenTransferLog[] = [];
+  nativeTransfers: { to: string; value: bigint }[] = [];
+  tokenTransfers: { to: string; value: bigint }[] = [];
+  receipts = new Map<string, TransactionReceiptSummary>();
 
   async getLatestBlockNumber(): Promise<bigint> {
     return this.latestBlock;
@@ -27,7 +26,7 @@ class MockEvmProvider implements EvmProvider {
     token: TokenConfig,
     fromBlock: bigint,
     toBlock: bigint
-  ): Promise<Erc20TransferLog[]> {
+  ): Promise<TokenTransferLog[]> {
     return this.logs.filter(
       (log) =>
         log.network === network.slug &&
@@ -45,26 +44,26 @@ class MockEvmProvider implements EvmProvider {
     return this.tokenBalance;
   }
 
-  async sendNativeTransfer(_network: NetworkConfig, _fromPrivateKey: Hex, to: Address, value: bigint): Promise<Hex> {
+  async sendNativeTransfer(_network: NetworkConfig, _fromPrivateKey: string, to: string, value: bigint): Promise<string> {
     this.nativeTransfers.push({ to, value });
-    const hash = `0x${"1".repeat(64)}` as Hex;
+    const hash = `0x${"1".repeat(64)}`;
     return hash;
   }
 
   async sendTokenTransfer(
     _network: NetworkConfig,
     _token: TokenConfig,
-    _fromPrivateKey: Hex,
-    to: Address,
+    _fromPrivateKey: string,
+    to: string,
     value: bigint
-  ): Promise<Hex> {
+  ): Promise<string> {
     this.tokenTransfers.push({ to, value });
-    const hash = `0x${"2".repeat(64)}` as Hex;
+    const hash = `0x${"2".repeat(64)}`;
     this.receipts.set(hash, { status: "success", blockNumber: this.latestBlock });
     return hash;
   }
 
-  async getTransactionReceipt(_network: NetworkConfig, txHash: Hex): Promise<TransactionReceiptSummary | null> {
+  async getTransactionReceipt(_network: NetworkConfig, txHash: string): Promise<TransactionReceiptSummary | null> {
     return this.receipts.get(txHash) ?? null;
   }
 }
@@ -90,12 +89,12 @@ async function setupWorker(ttlSeconds = 3600) {
     token: "USDT",
     ttlSeconds
   });
-  const evm = new MockEvmProvider();
+  const evm = new MockChainProvider();
   const worker = new DepositWorker({
     repo,
     networks: config.networks,
     encryptor: config.encryptor,
-    evm,
+    chainProvider: evm,
     webhooks
   });
 

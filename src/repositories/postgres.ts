@@ -1,5 +1,4 @@
 import { and, asc, desc, eq, lte } from "drizzle-orm";
-import type { Address, Hex } from "viem";
 import {
   chainCursors,
   depositAddresses,
@@ -16,6 +15,8 @@ import {
 } from "../db/schema.js";
 import type {
   ApiKeyStatus,
+  ChainAddress,
+  ChainTxHash,
   ChainCursor,
   DepositAddress,
   GasTopUp,
@@ -64,7 +65,7 @@ function mapWebhookConfig(row: typeof webhookConfigs.$inferSelect): WebhookConfi
 }
 
 function mapTreasuryWallet(row: typeof treasuryWallets.$inferSelect): TreasuryWallet {
-  return { ...row, network: row.network as NetworkSlug, token: row.token as TokenSymbol, address: row.address as Address };
+  return { ...row, network: row.network as NetworkSlug, token: row.token as TokenSymbol, address: row.address };
 }
 
 function mapDepositAddress(row: typeof depositAddresses.$inferSelect): DepositAddress {
@@ -72,7 +73,7 @@ function mapDepositAddress(row: typeof depositAddresses.$inferSelect): DepositAd
     ...row,
     network: row.network as NetworkSlug,
     token: row.token as TokenSymbol,
-    address: row.address as Address,
+    address: row.address,
     status: row.status as DepositAddress["status"]
   };
 }
@@ -86,16 +87,16 @@ function mapTransfer(row: typeof tokenTransfers.$inferSelect): TokenTransfer {
     ...row,
     network: row.network as NetworkSlug,
     token: row.token as TokenSymbol,
-    txHash: row.txHash as Hex,
-    fromAddress: row.fromAddress as Address,
-    toAddress: row.toAddress as Address,
-    blockHash: row.blockHash as Hex | null,
+    txHash: row.txHash,
+    fromAddress: row.fromAddress,
+    toAddress: row.toAddress,
+    blockHash: row.blockHash,
     status: row.status as TokenTransfer["status"]
   };
 }
 
 function mapGasTopUp(row: typeof gasTopUps.$inferSelect): GasTopUp {
-  return { ...row, network: row.network as NetworkSlug, txHash: row.txHash as Hex | null, status: row.status as TransactionStatus };
+  return { ...row, network: row.network as NetworkSlug, txHash: row.txHash, status: row.status as TransactionStatus };
 }
 
 function mapSweep(row: typeof sweeps.$inferSelect): Sweep {
@@ -103,8 +104,8 @@ function mapSweep(row: typeof sweeps.$inferSelect): Sweep {
     ...row,
     network: row.network as NetworkSlug,
     token: row.token as TokenSymbol,
-    txHash: row.txHash as Hex | null,
-    toAddress: row.toAddress as Address,
+    txHash: row.txHash,
+    toAddress: row.toAddress,
     status: row.status as TransactionStatus
   };
 }
@@ -234,7 +235,7 @@ export class PostgresRepository implements Repository {
   async getDepositAddressByAddress(
     network: NetworkSlug,
     token: TokenSymbol,
-    address: Address
+    address: ChainAddress
   ): Promise<DepositAddress | null> {
     const rows = await this.db
       .select()
@@ -243,7 +244,7 @@ export class PostgresRepository implements Repository {
         and(
           eq(depositAddresses.network, network),
           eq(depositAddresses.token, token),
-          eq(depositAddresses.address, address.toLowerCase())
+          eq(depositAddresses.address, address)
         )
       )
       .limit(1);
@@ -403,7 +404,7 @@ export class PostgresRepository implements Repository {
   async updateGasTopUpStatus(
     id: string,
     status: TransactionStatus,
-    txHash: Hex | null,
+    txHash: ChainTxHash | null,
     failureReason?: string | null
   ): Promise<GasTopUp | null> {
     const rows = await this.db
@@ -454,7 +455,7 @@ export class PostgresRepository implements Repository {
   async updateSweepStatus(
     id: string,
     status: TransactionStatus,
-    txHash: Hex | null,
+    txHash: ChainTxHash | null,
     failureReason?: string | null
   ): Promise<Sweep | null> {
     const rows = await this.db

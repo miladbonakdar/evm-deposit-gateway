@@ -111,7 +111,8 @@ export function createApp({ repo, config }: CreateAppDependencies) {
     const enabled = enabledNetworks(config.networks)
       .map((network) => ({
         network: network.slug,
-        chainId: network.chain.id,
+        kind: network.kind,
+        chainId: network.chainId,
         confirmations: network.confirmations,
         tokens: enabledTokens(network)
           .map((token) => ({

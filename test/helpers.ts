@@ -1,15 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { mainnet } from "viem/chains";
-import type { Address, Hex } from "viem";
 import type { AppConfig } from "../src/config/env.js";
 import type { SupportedNetworks } from "../src/config/networks.js";
 import { Encryptor } from "../src/security/encryption.js";
 import { signRequest } from "../src/security/hmac.js";
 
 export const testAdminApiKey = "test-admin-api-key-1234567890";
-export const testTreasuryAddress = "0x0000000000000000000000000000000000000abc" as Address;
-export const testTokenAddress = "0x0000000000000000000000000000000000000001" as Address;
-export const testGasPrivateKey = `0x${"0123456789abcdef".repeat(4)}` as Hex;
+export const testTreasuryAddress = "0x0000000000000000000000000000000000000abc";
+export const testTokenAddress = "0x0000000000000000000000000000000000000001";
+export const testGasPrivateKey = `0x${"0123456789abcdef".repeat(4)}`;
+export const testTronTreasuryAddress = "TFsyngiXwzZE5NqQmAwZ421bTRLyAvJANi";
+export const testTronTokenAddress = "TMAsPnWJUfj58iEPn55V8efb2FAWskrwDw";
 
 export function createTestEncryptor(): Encryptor {
   return new Encryptor(randomBytes(32));
@@ -19,7 +20,9 @@ export function createTestNetworks(overrides: Partial<SupportedNetworks["ethereu
   return {
     ethereum: {
       slug: "ethereum",
+      kind: "evm",
       chain: mainnet,
+      chainId: mainnet.id,
       rpcUrl: "http://localhost:8545",
       confirmations: 12,
       scanFromBlock: 0n,
@@ -33,7 +36,7 @@ export function createTestNetworks(overrides: Partial<SupportedNetworks["ethereu
           contractAddress: testTokenAddress,
           decimals: 6
         },
-    USDC: undefined
+        USDC: undefined
       },
       ...overrides
     },
@@ -47,7 +50,9 @@ export function createTestNetworks(overrides: Partial<SupportedNetworks["ethereu
     polygonAmoy: undefined,
     arbitrumSepolia: undefined,
     optimismSepolia: undefined,
-    baseSepolia: undefined
+    baseSepolia: undefined,
+    tron: undefined,
+    nile: undefined
   };
 }
 

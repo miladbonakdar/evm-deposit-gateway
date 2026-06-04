@@ -1,4 +1,3 @@
-import type { Address } from "viem";
 import { assertEnabledToken, type SupportedNetworks } from "../config/networks.js";
 import { notFound } from "../errors.js";
 import type { Encryptor } from "../security/encryption.js";
@@ -91,14 +90,14 @@ export class MerchantService {
     addressInput: string
   ) {
     await this.requireMerchant(merchantId);
-    assertEnabledToken(this.networks, network, token);
-    const address = normalizeAddress(addressInput);
+    const { network: networkConfig } = assertEnabledToken(this.networks, network, token);
+    const address = normalizeAddress(networkConfig, addressInput);
     const wallet = await this.repo.upsertTreasuryWallet({
       id: newId(),
       merchantId,
       network,
       token,
-      address: address as Address
+      address
     });
 
     return {

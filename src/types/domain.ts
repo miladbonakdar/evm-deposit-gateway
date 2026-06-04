@@ -1,5 +1,3 @@
-import type { Address, Hex } from "viem";
-
 export const networkSlugs = [
   "ethereum",
   "bsc",
@@ -12,12 +10,16 @@ export const networkSlugs = [
   "polygonAmoy",
   "arbitrumSepolia",
   "optimismSepolia",
-  "baseSepolia"
+  "baseSepolia",
+  "tron",
+  "nile"
 ] as const;
 export const tokenSymbols = ["USDT", "USDC"] as const;
 
 export type NetworkSlug = (typeof networkSlugs)[number];
 export type TokenSymbol = (typeof tokenSymbols)[number];
+export type ChainAddress = string;
+export type ChainTxHash = string;
 export type MerchantStatus = "active" | "disabled";
 export type ApiKeyStatus = "active" | "revoked";
 export type DepositAddressStatus = "active" | "expired";
@@ -69,7 +71,7 @@ export interface TreasuryWallet {
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  address: Address;
+  address: ChainAddress;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,7 +81,7 @@ export interface DepositAddress {
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  address: Address;
+  address: ChainAddress;
   privateKeyEncrypted: string;
   status: DepositAddressStatus;
   expiresAt: Date;
@@ -102,14 +104,14 @@ export interface TokenTransfer {
   depositAddressId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  txHash: Hex;
+  txHash: ChainTxHash;
   logIndex: number;
-  fromAddress: Address;
-  toAddress: Address;
+  fromAddress: ChainAddress;
+  toAddress: ChainAddress;
   amountRaw: string;
   amountFormatted: string;
   blockNumber: bigint;
-  blockHash: Hex | null;
+  blockHash: ChainTxHash | null;
   confirmations: number;
   status: TransferStatus;
   detectedAt: Date;
@@ -122,7 +124,7 @@ export interface GasTopUp {
   merchantId: string;
   depositAddressId: string;
   network: NetworkSlug;
-  txHash: Hex | null;
+  txHash: ChainTxHash | null;
   amountWei: string;
   status: TransactionStatus;
   failureReason: string | null;
@@ -137,10 +139,10 @@ export interface Sweep {
   depositAddressId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  txHash: Hex | null;
+  txHash: ChainTxHash | null;
   amountRaw: string;
   amountFormatted: string;
-  toAddress: Address;
+  toAddress: ChainAddress;
   status: TransactionStatus;
   failureReason: string | null;
   createdAt: Date;

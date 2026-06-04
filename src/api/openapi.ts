@@ -7,6 +7,7 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
       enabledTokens(network)
         .map((token) => ({
           network: network.slug,
+          kind: network.kind,
           token: token.symbol,
           contractAddress: token.contractAddress,
           decimals: token.decimals

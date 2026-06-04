@@ -8,16 +8,17 @@ Testnets are supported as first-class network slugs:
 - `arbitrumSepolia`
 - `optimismSepolia`
 - `baseSepolia`
+- `nile`
 
 ## Important Note About Testnet Tokens
 
-There is no universal canonical USDT/USDC contract on every testnet. For reliable testing, use one of these approaches:
+There is no universal canonical USDT/USDC contract on every EVM or TRON testnet. For reliable testing, use one of these approaches:
 
 - Use a verified faucet token contract for the target testnet.
 - Deploy your own ERC-20 mock token named USDT or USDC.
 - Use Circle faucet USDC where available, then set that contract address.
 
-The gateway only requires an ERC-20 contract address and decimals. The token symbol in this app is operational metadata for routing and treasury configuration.
+The gateway only requires an ERC-20 or TRC-20 contract address and decimals. The token symbol in this app is operational metadata for routing and treasury configuration.
 
 ## Configure Testnet Environment
 
@@ -30,6 +31,7 @@ Fill:
 - `ADMIN_API_KEY`
 - `ENCRYPTION_MASTER_KEY_BASE64`
 - `RPC_URL_<TESTNET>`
+- `EVENT_SERVER_URL_<TESTNET>` for TRON networks when the event server differs from the full node
 - `USDT_CONTRACT_<TESTNET>` or `USDC_CONTRACT_<TESTNET>`
 - matching decimals
 - `GAS_WALLET_PRIVATE_KEY_<TESTNET>`
@@ -71,6 +73,21 @@ APP_ENV_FILE=.env.testnet.example docker compose -f docker-compose.yml -f docker
   "token": "USDC",
   "ttlSeconds": 3600,
   "externalId": "testnet-invoice-001",
+  "metadata": {
+    "environment": "testnet"
+  },
+  "qrFormat": "pngDataUrl"
+}
+```
+
+TRON Nile example:
+
+```json
+{
+  "network": "nile",
+  "token": "USDT",
+  "ttlSeconds": 3600,
+  "externalId": "nile-invoice-001",
   "metadata": {
     "environment": "testnet"
   },

@@ -1,7 +1,8 @@
-import type { Address, Hex } from "viem";
 import type {
   ApiKeyStatus,
+  ChainAddress,
   ChainCursor,
+  ChainTxHash,
   DepositAddress,
   GasTopUp,
   IdempotencyRecord,
@@ -43,7 +44,7 @@ export interface UpsertTreasuryWalletInput {
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  address: Address;
+  address: ChainAddress;
 }
 
 export interface CreateDepositAddressInput {
@@ -51,7 +52,7 @@ export interface CreateDepositAddressInput {
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  address: Address;
+  address: ChainAddress;
   privateKeyEncrypted: string;
   expiresAt: Date;
   externalId: string | null;
@@ -64,14 +65,14 @@ export interface CreateTokenTransferInput {
   depositAddressId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  txHash: Hex;
+  txHash: ChainTxHash;
   logIndex: number;
-  fromAddress: Address;
-  toAddress: Address;
+  fromAddress: ChainAddress;
+  toAddress: ChainAddress;
   amountRaw: string;
   amountFormatted: string;
   blockNumber: bigint;
-  blockHash: Hex | null;
+  blockHash: ChainTxHash | null;
   confirmations: number;
   status: TransferStatus;
 }
@@ -82,7 +83,7 @@ export interface CreateGasTopUpInput {
   merchantId: string;
   depositAddressId: string;
   network: NetworkSlug;
-  txHash: Hex | null;
+  txHash: ChainTxHash | null;
   amountWei: string;
   status: TransactionStatus;
   failureReason?: string | null;
@@ -95,10 +96,10 @@ export interface CreateSweepInput {
   depositAddressId: string;
   network: NetworkSlug;
   token: TokenSymbol;
-  txHash: Hex | null;
+  txHash: ChainTxHash | null;
   amountRaw: string;
   amountFormatted: string;
-  toAddress: Address;
+  toAddress: ChainAddress;
   status: TransactionStatus;
   failureReason?: string | null;
 }
@@ -145,7 +146,7 @@ export interface Repository {
 
   createDepositAddress(input: CreateDepositAddressInput): Promise<DepositAddress>;
   getDepositAddressForMerchant(merchantId: string, id: string): Promise<DepositAddress | null>;
-  getDepositAddressByAddress(network: NetworkSlug, token: TokenSymbol, address: Address): Promise<DepositAddress | null>;
+  getDepositAddressByAddress(network: NetworkSlug, token: TokenSymbol, address: ChainAddress): Promise<DepositAddress | null>;
   expireDepositAddresses(now: Date): Promise<DepositAddress[]>;
 
   getChainCursor(network: NetworkSlug, token: TokenSymbol): Promise<ChainCursor | null>;
@@ -160,12 +161,12 @@ export interface Repository {
   getGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null>;
   createGasTopUpIfNotExists(input: CreateGasTopUpInput): Promise<{ gasTopUp: GasTopUp; created: boolean }>;
   listSubmittedGasTopUps(limit: number): Promise<GasTopUp[]>;
-  updateGasTopUpStatus(id: string, status: TransactionStatus, txHash: Hex | null, failureReason?: string | null): Promise<GasTopUp | null>;
+  updateGasTopUpStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<GasTopUp | null>;
 
   getSweepByTransfer(transferId: string): Promise<Sweep | null>;
   createSweepIfNotExists(input: CreateSweepInput): Promise<{ sweep: Sweep; created: boolean }>;
   listSubmittedSweeps(limit: number): Promise<Sweep[]>;
-  updateSweepStatus(id: string, status: TransactionStatus, txHash: Hex | null, failureReason?: string | null): Promise<Sweep | null>;
+  updateSweepStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<Sweep | null>;
 
   createWebhookEvent(input: CreateWebhookEventInput): Promise<WebhookEvent>;
   listDueWebhookEvents(now: Date, limit: number): Promise<WebhookEvent[]>;

@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/api/app.js";
 import { MemoryRepository } from "../src/repositories/memory.js";
-import { adminHeaders, createTestConfig, signedHeaders, testTreasuryAddress } from "./helpers.js";
+import {
+  adminHeaders,
+  createTestConfig,
+  createTestNetworks,
+  signedHeaders,
+  testTreasuryAddress,
+  testTronTokenAddress,
+  testTronTreasuryAddress
+} from "./helpers.js";
 
 interface MerchantResponse {
   id: string;
@@ -52,6 +60,53 @@ async function setupApi() {
   });
 
   return { app, repo, merchant, apiKey };
+}
+
+async function setupTronApi() {
+  const repo = new MemoryRepository();
+  const networks = createTestNetworks();
+  networks.tron = {
+    slug: "tron",
+    kind: "tron",
+    rpcUrl: "https://api.trongrid.io",
+    eventServerUrl: "https://api.trongrid.io",
+    confirmations: 20,
+    scanFromBlock: 0n,
+    maxScanBlocks: 500n,
+    gasWalletPrivateKey: "0x" + "1".repeat(64),
+    minGasWei: 5_000_000n,
+    gasTopUpWei: 10_000_000n,
+    tokens: {
+      USDT: {
+        symbol: "USDT",
+        contractAddress: testTronTokenAddress,
+        decimals: 6
+      },
+      USDC: undefined
+    }
+  };
+  const config = createTestConfig({ networks });
+  const app = createApp({ repo, config });
+
+  const merchantResponse = await app.request("/admin/merchants", {
+    method: "POST",
+    headers: adminHeaders(),
+    body: JSON.stringify({ name: "Tron Merchant" })
+  });
+  const merchant = (await merchantResponse.json()) as MerchantResponse;
+  const apiKeyResponse = await app.request(`/admin/merchants/${merchant.id}/api-keys`, {
+    method: "POST",
+    headers: adminHeaders()
+  });
+  const apiKey = (await apiKeyResponse.json()) as ApiKeyResponse;
+
+  await app.request(`/admin/merchants/${merchant.id}/treasury-wallets`, {
+    method: "PUT",
+    headers: adminHeaders(),
+    body: JSON.stringify({ network: "tron", token: "USDT", address: testTronTreasuryAddress })
+  });
+
+  return { app, apiKey };
 }
 
 describe("Hono API", () => {
@@ -143,5 +198,25 @@ describe("Hono API", () => {
     expect(body["x-enabled-assets"]).toEqual([
       expect.objectContaining({ network: "ethereum", token: "USDT", decimals: 6 })
     ]);
+  });
+
+  it("creates TRON deposit addresses when TRON is configured", async () => {
+    const { app, apiKey } = await setupTronApi();
+    const body = JSON.stringify({ network: "tron", token: "USDT", ttlSeconds: 3600 });
+    const response = await app.request("/v1/deposit-addresses", {
+      method: "POST",
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "POST",
+        path: "/v1/deposit-addresses",
+        body
+      }),
+      body
+    });
+
+    expect(response.status).toBe(201);
+    const depositAddress = (await response.json()) as DepositAddressResponse;
+    expect(depositAddress.address).toMatch(/^T[1-9A-HJ-NP-Za-km-z]{33}$/);
   });
 });

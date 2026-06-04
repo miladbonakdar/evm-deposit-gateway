@@ -78,7 +78,9 @@ type NetworkSlug =
   | "polygonAmoy"
   | "arbitrumSepolia"
   | "optimismSepolia"
-  | "baseSepolia";
+  | "baseSepolia"
+  | "tron"
+  | "nile";
 
 type TokenSymbol = "USDT" | "USDC";
 type DepositAddressStatus = "active" | "expired";

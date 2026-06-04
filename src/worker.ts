@@ -5,16 +5,19 @@ import { WebhookDeliveryService } from "./services/webhook-delivery.js";
 import { DefaultWebhookService } from "./services/webhook-service.js";
 import { DepositWorker } from "./worker/deposit-worker.js";
 import { ViemEvmProvider } from "./worker/evm-provider.js";
+import { MultiChainProvider } from "./worker/multi-chain-provider.js";
+import { TronProvider } from "./worker/tron-provider.js";
 
 const config = loadAppConfig();
 const { db, client } = createDb(config.databaseUrl);
 const repo = new PostgresRepository(db);
 const webhooks = new DefaultWebhookService(repo, config.encryptor);
+const chainProvider = new MultiChainProvider(new ViemEvmProvider(), new TronProvider());
 const worker = new DepositWorker({
   repo,
   networks: config.networks,
   encryptor: config.encryptor,
-  evm: new ViemEvmProvider(),
+  chainProvider,
   webhooks
 });
 const delivery = new WebhookDeliveryService(repo, config);
