@@ -30,6 +30,12 @@ The v1 scope is deposits only. It does not provide exchange, withdrawal, custome
 - Signed webhook outbox with retries
 - OpenAPI JSON at `/openapi.json`
 
+## More docs
+
+- [Docker and Compose](docs/DOCKER.md)
+- [Testnet setup](docs/TESTNET.md)
+- [Callbacks, payloads, and lifecycle](docs/CALLBACKS.md)
+
 ## Setup
 
 ```bash
@@ -53,13 +59,27 @@ npm start
 npm run start:worker
 ```
 
+Docker Compose:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Testnet Compose:
+
+```bash
+cp .env.testnet.example .env.testnet
+docker compose -f docker-compose.yml -f docker-compose.testnet.yml up --build
+```
+
 ## Local development checklist
 
 1. Create a Postgres database.
 2. Fill `.env` with `DATABASE_URL`, `ADMIN_API_KEY`, and `ENCRYPTION_MASTER_KEY_BASE64`.
 3. Configure at least one network RPC URL and token contract pair.
-4. Run `npm run db:migrate`.
-5. Start API and worker in separate processes.
+4. Run `npm run db:migrate`, or let Docker Compose run the `migrate` service.
+5. Start API and worker in separate processes, or use Docker Compose.
 6. Create a merchant, API key, webhook config, and treasury wallet through admin endpoints.
 
 ## Environment
@@ -79,7 +99,9 @@ USDT_DECIMALS_ETHEREUM=6
 GAS_WALLET_PRIVATE_KEY_ETHEREUM=0x...
 ```
 
-The supported v1 network slugs are `ethereum`, `bsc`, `polygon`, `arbitrum`, `optimism`, and `base`.
+The supported v1 mainnet slugs are `ethereum`, `bsc`, `polygon`, `arbitrum`, `optimism`, and `base`.
+
+The supported v1 testnet slugs are `sepolia`, `bscTestnet`, `polygonAmoy`, `arbitrumSepolia`, `optimismSepolia`, and `baseSepolia`.
 
 ## Admin API
 
@@ -261,6 +283,7 @@ timestamp.raw_json_body
 Lifecycle event types:
 
 - `wallet.created`
+- `wallet.expired`
 - `transfer.detected`
 - `deposit.confirmed`
 - `deposit.late_detected`
@@ -272,6 +295,8 @@ Lifecycle event types:
 - `sweep.failed`
 
 Webhook receivers should use `id` from the JSON body or `X-Webhook-Id` for idempotency.
+
+See [Callbacks, payloads, and lifecycle](docs/CALLBACKS.md) for full event data types and transaction flow.
 
 Webhook body shape:
 

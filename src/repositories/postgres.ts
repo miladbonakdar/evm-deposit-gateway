@@ -251,13 +251,13 @@ export class PostgresRepository implements Repository {
     return row ? mapDepositAddress(row) : null;
   }
 
-  async expireDepositAddresses(now: Date): Promise<number> {
+  async expireDepositAddresses(now: Date): Promise<DepositAddress[]> {
     const rows = await this.db
       .update(depositAddresses)
       .set({ status: "expired", updatedAt: now })
       .where(and(eq(depositAddresses.status, "active"), lte(depositAddresses.expiresAt, now)))
-      .returning({ id: depositAddresses.id });
-    return rows.length;
+      .returning();
+    return rows.map(mapDepositAddress);
   }
 
   async getChainCursor(network: NetworkSlug, token: TokenSymbol): Promise<ChainCursor | null> {

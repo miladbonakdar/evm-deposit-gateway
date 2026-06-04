@@ -40,7 +40,7 @@ export class WebhookDeliveryService {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "user-agent": "crypto-payment-webhooks/0.1",
+            "user-agent": "evm-deposit-gateway-webhooks/0.1",
             "x-webhook-id": event.id,
             "x-webhook-timestamp": timestamp,
             "x-webhook-signature": `sha256=${signature}`

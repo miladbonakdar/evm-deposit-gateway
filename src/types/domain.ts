@@ -1,6 +1,19 @@
 import type { Address, Hex } from "viem";
 
-export const networkSlugs = ["ethereum", "bsc", "polygon", "arbitrum", "optimism", "base"] as const;
+export const networkSlugs = [
+  "ethereum",
+  "bsc",
+  "polygon",
+  "arbitrum",
+  "optimism",
+  "base",
+  "sepolia",
+  "bscTestnet",
+  "polygonAmoy",
+  "arbitrumSepolia",
+  "optimismSepolia",
+  "baseSepolia"
+] as const;
 export const tokenSymbols = ["USDT", "USDC"] as const;
 
 export type NetworkSlug = (typeof networkSlugs)[number];
@@ -13,6 +26,7 @@ export type TransactionStatus = "submitted" | "confirmed" | "failed";
 export type WebhookStatus = "pending" | "sent" | "failed";
 export type WebhookEventType =
   | "wallet.created"
+  | "wallet.expired"
   | "transfer.detected"
   | "deposit.confirmed"
   | "deposit.late_detected"

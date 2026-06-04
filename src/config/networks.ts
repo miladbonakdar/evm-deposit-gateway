@@ -1,5 +1,18 @@
 import { isAddress, type Address, type Chain, type Hex } from "viem";
-import { arbitrum, base, bsc, mainnet, optimism, polygon } from "viem/chains";
+import {
+  arbitrum,
+  arbitrumSepolia,
+  base,
+  baseSepolia,
+  bsc,
+  bscTestnet,
+  mainnet,
+  optimism,
+  optimismSepolia,
+  polygon,
+  polygonAmoy,
+  sepolia
+} from "viem/chains";
 import { z } from "zod";
 import { badRequest } from "../errors.js";
 import { networkSlugs, tokenSymbols, type NetworkSlug, type TokenSymbol } from "../types/domain.js";
@@ -31,10 +44,31 @@ const chainBySlug = {
   polygon,
   arbitrum,
   optimism,
-  base
+  base,
+  sepolia,
+  bscTestnet,
+  polygonAmoy,
+  arbitrumSepolia,
+  optimismSepolia,
+  baseSepolia
 } satisfies Record<NetworkSlug, Chain>;
 
-const upperSlug = (network: NetworkSlug): string => network.toUpperCase();
+const envSuffixBySlug = {
+  ethereum: "ETHEREUM",
+  bsc: "BSC",
+  polygon: "POLYGON",
+  arbitrum: "ARBITRUM",
+  optimism: "OPTIMISM",
+  base: "BASE",
+  sepolia: "SEPOLIA",
+  bscTestnet: "BSC_TESTNET",
+  polygonAmoy: "POLYGON_AMOY",
+  arbitrumSepolia: "ARBITRUM_SEPOLIA",
+  optimismSepolia: "OPTIMISM_SEPOLIA",
+  baseSepolia: "BASE_SEPOLIA"
+} satisfies Record<NetworkSlug, string>;
+
+const upperSlug = (network: NetworkSlug): string => envSuffixBySlug[network];
 
 function parseBigIntEnv(env: NodeJS.ProcessEnv, key: string, fallback: bigint): bigint {
   const raw = env[key];

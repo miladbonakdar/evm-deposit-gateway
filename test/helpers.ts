@@ -33,7 +33,7 @@ export function createTestNetworks(overrides: Partial<SupportedNetworks["ethereu
           contractAddress: testTokenAddress,
           decimals: 6
         },
-        USDC: undefined
+    USDC: undefined
       },
       ...overrides
     },
@@ -41,7 +41,13 @@ export function createTestNetworks(overrides: Partial<SupportedNetworks["ethereu
     polygon: undefined,
     arbitrum: undefined,
     optimism: undefined,
-    base: undefined
+    base: undefined,
+    sepolia: undefined,
+    bscTestnet: undefined,
+    polygonAmoy: undefined,
+    arbitrumSepolia: undefined,
+    optimismSepolia: undefined,
+    baseSepolia: undefined
   };
 }
 

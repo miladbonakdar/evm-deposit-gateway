@@ -146,7 +146,7 @@ export interface Repository {
   createDepositAddress(input: CreateDepositAddressInput): Promise<DepositAddress>;
   getDepositAddressForMerchant(merchantId: string, id: string): Promise<DepositAddress | null>;
   getDepositAddressByAddress(network: NetworkSlug, token: TokenSymbol, address: Address): Promise<DepositAddress | null>;
-  expireDepositAddresses(now: Date): Promise<number>;
+  expireDepositAddresses(now: Date): Promise<DepositAddress[]>;
 
   getChainCursor(network: NetworkSlug, token: TokenSymbol): Promise<ChainCursor | null>;
   upsertChainCursor(network: NetworkSlug, token: TokenSymbol, lastScannedBlock: bigint): Promise<ChainCursor>;

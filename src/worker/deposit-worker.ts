@@ -22,11 +22,21 @@ export class DepositWorker {
   constructor(private readonly deps: DepositWorkerDependencies) {}
 
   async runOnce(): Promise<void> {
-    await this.deps.repo.expireDepositAddresses(new Date());
+    await this.expireDepositAddresses();
     await this.scanEnabledAssets();
     await this.confirmPendingTransfers();
     await this.confirmGasTopUps();
     await this.confirmSweeps();
+  }
+
+  private async expireDepositAddresses(): Promise<void> {
+    const expired = await this.deps.repo.expireDepositAddresses(new Date());
+
+    for (const depositAddress of expired) {
+      await this.deps.webhooks.enqueueMerchantEvent(depositAddress.merchantId, "wallet.expired", {
+        depositAddress: publicDepositAddress(depositAddress)
+      });
+    }
   }
 
   private async scanEnabledAssets(): Promise<void> {

@@ -1,0 +1,12 @@
+services:
+  migrate:
+    env_file:
+      - ${APP_ENV_FILE:-.env.testnet}
+
+  api:
+    env_file:
+      - ${APP_ENV_FILE:-.env.testnet}
+
+  worker:
+    env_file:
+      - ${APP_ENV_FILE:-.env.testnet}

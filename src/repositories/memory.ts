@@ -217,16 +217,16 @@ export class MemoryRepository implements Repository {
     return clone(id ? (this.depositAddresses.get(id) ?? null) : null);
   }
 
-  async expireDepositAddresses(currentTime: Date): Promise<number> {
-    let count = 0;
+  async expireDepositAddresses(currentTime: Date): Promise<DepositAddress[]> {
+    const expired: DepositAddress[] = [];
     for (const depositAddress of this.depositAddresses.values()) {
       if (depositAddress.status === "active" && depositAddress.expiresAt <= currentTime) {
         depositAddress.status = "expired";
         depositAddress.updatedAt = currentTime;
-        count += 1;
+        expired.push(depositAddress);
       }
     }
-    return count;
+    return clone(expired);
   }
 
   async getChainCursor(network: NetworkSlug, token: TokenSymbol): Promise<ChainCursor | null> {

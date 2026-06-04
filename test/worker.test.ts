@@ -69,7 +69,7 @@ class MockEvmProvider implements EvmProvider {
   }
 }
 
-async function setupWorker() {
+async function setupWorker(ttlSeconds = 3600) {
   const config = createTestConfig();
   const repo = new MemoryRepository();
   const webhooks = new DefaultWebhookService(repo, config.encryptor);
@@ -88,7 +88,7 @@ async function setupWorker() {
     merchantId: merchant.id,
     network: "ethereum",
     token: "USDT",
-    ttlSeconds: 3600
+    ttlSeconds
   });
   const evm = new MockEvmProvider();
   const worker = new DepositWorker({
@@ -103,6 +103,16 @@ async function setupWorker() {
 }
 
 describe("deposit worker", () => {
+  it("emits a wallet.expired callback once when a temporary wallet expires", async () => {
+    const { repo, worker } = await setupWorker(-1);
+
+    await worker.runOnce();
+    await worker.runOnce();
+
+    const events = await repo.listDueWebhookEvents(new Date(), 20);
+    expect(events.map((event) => event.type).filter((type) => type === "wallet.expired")).toHaveLength(1);
+  });
+
   it("detects confirmed ERC-20 deposits and sweeps them to treasury", async () => {
     const { repo, merchant, depositAddress, evm, worker } = await setupWorker();
     evm.logs.push({
