@@ -6,10 +6,12 @@ import {
   idempotencyKeys,
   merchantApiKeys,
   merchants,
+  operationalWallets,
   requestNonces,
   sweeps,
   tokenTransfers,
   treasuryWallets,
+  walletTransactions,
   webhookConfigs,
   webhookEvents
 } from "../db/schema.js";
@@ -24,13 +26,15 @@ import type {
   Merchant,
   MerchantApiKey,
   NetworkSlug,
+  OperationalWallet,
   Sweep,
   TokenSymbol,
   TokenTransfer,
   TransactionStatus,
   TreasuryWallet,
   WebhookConfig,
-  WebhookEvent
+  WebhookEvent,
+  WalletTransaction
 } from "../types/domain.js";
 import type { Db } from "../db/client.js";
 import type {
@@ -42,8 +46,13 @@ import type {
   CreateSweepInput,
   CreateTokenTransferInput,
   CreateWebhookEventInput,
+  CreateWalletTransactionInput,
+  ListDepositAddressesFilter,
   ListDepositsFilter,
+  ListOperationalWalletsFilter,
+  ListTransfersFilter,
   Repository,
+  UpsertOperationalWalletInput,
   UpsertTreasuryWalletInput,
   UpsertWebhookConfigInput
 } from "./repository.js";
@@ -66,6 +75,17 @@ function mapWebhookConfig(row: typeof webhookConfigs.$inferSelect): WebhookConfi
 
 function mapTreasuryWallet(row: typeof treasuryWallets.$inferSelect): TreasuryWallet {
   return { ...row, network: row.network as NetworkSlug, token: row.token as TokenSymbol, address: row.address };
+}
+
+function mapOperationalWallet(row: typeof operationalWallets.$inferSelect): OperationalWallet {
+  return {
+    ...row,
+    merchantId: row.merchantId,
+    purpose: row.purpose as OperationalWallet["purpose"],
+    network: row.network as NetworkSlug,
+    token: row.token as TokenSymbol | null,
+    status: row.status as OperationalWallet["status"]
+  };
 }
 
 function mapDepositAddress(row: typeof depositAddresses.$inferSelect): DepositAddress {
@@ -110,6 +130,20 @@ function mapSweep(row: typeof sweeps.$inferSelect): Sweep {
   };
 }
 
+function mapWalletTransaction(row: typeof walletTransactions.$inferSelect): WalletTransaction {
+  return {
+    ...row,
+    merchantId: row.merchantId,
+    network: row.network as NetworkSlug,
+    token: row.token as TokenSymbol | null,
+    asset: row.asset as WalletTransaction["asset"],
+    txHash: row.txHash,
+    fromAddress: row.fromAddress,
+    toAddress: row.toAddress,
+    status: row.status as TransactionStatus
+  };
+}
+
 function mapWebhookEvent(row: typeof webhookEvents.$inferSelect): WebhookEvent {
   return { ...row, type: row.type as WebhookEvent["type"], status: row.status as WebhookEvent["status"], payload: row.payload as Record<string, unknown> };
 }
@@ -130,6 +164,11 @@ export class PostgresRepository implements Repository {
     const rows = await this.db.select().from(merchants).where(eq(merchants.id, id)).limit(1);
     const row = first(rows);
     return row ? mapMerchant(row) : null;
+  }
+
+  async listMerchants(limit: number): Promise<Merchant[]> {
+    const rows = await this.db.select().from(merchants).orderBy(desc(merchants.createdAt)).limit(limit);
+    return rows.map(mapMerchant);
   }
 
   async createApiKey(input: CreateApiKeyInput): Promise<MerchantApiKey> {
@@ -217,6 +256,71 @@ export class PostgresRepository implements Repository {
     return row ? mapTreasuryWallet(row) : null;
   }
 
+  async listTreasuryWallets(merchantId: string | undefined, limit: number): Promise<TreasuryWallet[]> {
+    const rows = await this.db
+      .select()
+      .from(treasuryWallets)
+      .where(merchantId ? eq(treasuryWallets.merchantId, merchantId) : undefined)
+      .orderBy(desc(treasuryWallets.updatedAt))
+      .limit(limit);
+    return rows.map(mapTreasuryWallet);
+  }
+
+  async upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet> {
+    const rows = await this.db
+      .insert(operationalWallets)
+      .values(input)
+      .onConflictDoUpdate({
+        target: operationalWallets.scopeKey,
+        set: {
+          merchantId: input.merchantId,
+          purpose: input.purpose,
+          network: input.network,
+          token: input.token,
+          address: input.address,
+          privateKeyEncrypted: input.privateKeyEncrypted,
+          label: input.label,
+          status: "active",
+          updatedAt: new Date()
+        }
+      })
+      .returning();
+    return mapOperationalWallet(rows[0] as typeof operationalWallets.$inferSelect);
+  }
+
+  async getOperationalWallet(id: string): Promise<OperationalWallet | null> {
+    const rows = await this.db.select().from(operationalWallets).where(eq(operationalWallets.id, id)).limit(1);
+    const row = first(rows);
+    return row ? mapOperationalWallet(row) : null;
+  }
+
+  async getOperationalGasWallet(network: NetworkSlug): Promise<OperationalWallet | null> {
+    const rows = await this.db
+      .select()
+      .from(operationalWallets)
+      .where(and(eq(operationalWallets.scopeKey, `gas:platform:${network}:native`), eq(operationalWallets.status, "active")))
+      .limit(1);
+    const row = first(rows);
+    return row ? mapOperationalWallet(row) : null;
+  }
+
+  async listOperationalWallets(filter: ListOperationalWalletsFilter): Promise<OperationalWallet[]> {
+    const conditions = [
+      filter.includeDisabled ? undefined : eq(operationalWallets.status, "active"),
+      filter.merchantId ? eq(operationalWallets.merchantId, filter.merchantId) : undefined,
+      filter.purpose ? eq(operationalWallets.purpose, filter.purpose) : undefined,
+      filter.network ? eq(operationalWallets.network, filter.network) : undefined,
+      filter.token ? eq(operationalWallets.token, filter.token) : undefined
+    ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
+    const rows = await this.db
+      .select()
+      .from(operationalWallets)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(operationalWallets.updatedAt))
+      .limit(filter.limit);
+    return rows.map(mapOperationalWallet);
+  }
+
   async createDepositAddress(input: CreateDepositAddressInput): Promise<DepositAddress> {
     const rows = await this.db.insert(depositAddresses).values(input).returning();
     return mapDepositAddress(rows[0] as typeof depositAddresses.$inferSelect);
@@ -250,6 +354,20 @@ export class PostgresRepository implements Repository {
       .limit(1);
     const row = first(rows);
     return row ? mapDepositAddress(row) : null;
+  }
+
+  async listDepositAddresses(filter: ListDepositAddressesFilter): Promise<DepositAddress[]> {
+    const conditions = [
+      filter.merchantId ? eq(depositAddresses.merchantId, filter.merchantId) : undefined,
+      filter.status ? eq(depositAddresses.status, filter.status) : undefined
+    ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
+    const rows = await this.db
+      .select()
+      .from(depositAddresses)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(depositAddresses.createdAt))
+      .limit(filter.limit);
+    return rows.map(mapDepositAddress);
   }
 
   async expireDepositAddresses(now: Date): Promise<DepositAddress[]> {
@@ -339,6 +457,20 @@ export class PostgresRepository implements Repository {
     return rows.map(mapTransfer);
   }
 
+  async listTokenTransfers(filter: ListTransfersFilter): Promise<TokenTransfer[]> {
+    const conditions = [
+      filter.merchantId ? eq(tokenTransfers.merchantId, filter.merchantId) : undefined,
+      filter.status ? eq(tokenTransfers.status, filter.status) : undefined
+    ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
+    const rows = await this.db
+      .select()
+      .from(tokenTransfers)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(tokenTransfers.detectedAt))
+      .limit(filter.limit);
+    return rows.map(mapTransfer);
+  }
+
   async listTransfersReadyForConfirmation(
     network: NetworkSlug,
     token: TokenSymbol,
@@ -401,6 +533,11 @@ export class PostgresRepository implements Repository {
     return rows.map(mapGasTopUp);
   }
 
+  async listGasTopUps(limit: number): Promise<GasTopUp[]> {
+    const rows = await this.db.select().from(gasTopUps).orderBy(desc(gasTopUps.createdAt)).limit(limit);
+    return rows.map(mapGasTopUp);
+  }
+
   async updateGasTopUpStatus(
     id: string,
     status: TransactionStatus,
@@ -452,6 +589,11 @@ export class PostgresRepository implements Repository {
     return rows.map(mapSweep);
   }
 
+  async listSweeps(limit: number): Promise<Sweep[]> {
+    const rows = await this.db.select().from(sweeps).orderBy(desc(sweeps.createdAt)).limit(limit);
+    return rows.map(mapSweep);
+  }
+
   async updateSweepStatus(
     id: string,
     status: TransactionStatus,
@@ -472,6 +614,49 @@ export class PostgresRepository implements Repository {
     return row ? mapSweep(row) : null;
   }
 
+  async createWalletTransaction(input: CreateWalletTransactionInput): Promise<WalletTransaction> {
+    const rows = await this.db
+      .insert(walletTransactions)
+      .values({ ...input, failureReason: input.failureReason ?? null })
+      .returning();
+    return mapWalletTransaction(rows[0] as typeof walletTransactions.$inferSelect);
+  }
+
+  async listWalletTransactions(limit: number): Promise<WalletTransaction[]> {
+    const rows = await this.db.select().from(walletTransactions).orderBy(desc(walletTransactions.createdAt)).limit(limit);
+    return rows.map(mapWalletTransaction);
+  }
+
+  async listSubmittedWalletTransactions(limit: number): Promise<WalletTransaction[]> {
+    const rows = await this.db
+      .select()
+      .from(walletTransactions)
+      .where(eq(walletTransactions.status, "submitted"))
+      .orderBy(asc(walletTransactions.createdAt))
+      .limit(limit);
+    return rows.map(mapWalletTransaction);
+  }
+
+  async updateWalletTransactionStatus(
+    id: string,
+    status: TransactionStatus,
+    txHash: ChainTxHash | null,
+    failureReason?: string | null
+  ): Promise<WalletTransaction | null> {
+    const rows = await this.db
+      .update(walletTransactions)
+      .set({
+        status,
+        txHash,
+        failureReason: failureReason ?? null,
+        confirmedAt: status === "confirmed" ? new Date() : null
+      })
+      .where(eq(walletTransactions.id, id))
+      .returning();
+    const row = first(rows);
+    return row ? mapWalletTransaction(row) : null;
+  }
+
   async createWebhookEvent(input: CreateWebhookEventInput): Promise<WebhookEvent> {
     const rows = await this.db.insert(webhookEvents).values(input).returning();
     return mapWebhookEvent(rows[0] as typeof webhookEvents.$inferSelect);
@@ -484,6 +669,11 @@ export class PostgresRepository implements Repository {
       .where(and(eq(webhookEvents.status, "pending"), lte(webhookEvents.nextAttemptAt, now)))
       .orderBy(asc(webhookEvents.createdAt))
       .limit(limit);
+    return rows.map(mapWebhookEvent);
+  }
+
+  async listWebhookEvents(limit: number): Promise<WebhookEvent[]> {
+    const rows = await this.db.select().from(webhookEvents).orderBy(desc(webhookEvents.createdAt)).limit(limit);
     return rows.map(mapWebhookEvent);
   }
 

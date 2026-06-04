@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/api/app.js";
+import type { NetworkConfig, TokenConfig } from "../src/config/networks.js";
 import { MemoryRepository } from "../src/repositories/memory.js";
+import type { ChainProvider, TokenTransferLog, TransactionReceiptSummary } from "../src/worker/chain-provider.js";
 import {
   adminHeaders,
   createTestConfig,
@@ -27,6 +29,47 @@ interface DepositAddressResponse {
     base64?: string;
   };
   privateKey?: string;
+}
+
+class MockChainProvider implements ChainProvider {
+  tokenTransfers: Array<{ to: string; value: bigint }> = [];
+  nativeTransfers: Array<{ to: string; value: bigint }> = [];
+
+  async getLatestBlockNumber(): Promise<bigint> {
+    return 100n;
+  }
+
+  async getTransferLogs(): Promise<TokenTransferLog[]> {
+    return [];
+  }
+
+  async getNativeBalance(): Promise<bigint> {
+    return 10_000_000_000_000_000n;
+  }
+
+  async getTokenBalance(): Promise<bigint> {
+    return 0n;
+  }
+
+  async sendNativeTransfer(_network: NetworkConfig, _fromPrivateKey: string, to: string, value: bigint): Promise<string> {
+    this.nativeTransfers.push({ to, value });
+    return `0x${"3".repeat(64)}`;
+  }
+
+  async sendTokenTransfer(
+    _network: NetworkConfig,
+    _token: TokenConfig,
+    _fromPrivateKey: string,
+    to: string,
+    value: bigint
+  ): Promise<string> {
+    this.tokenTransfers.push({ to, value });
+    return `0x${"4".repeat(64)}`;
+  }
+
+  async getTransactionReceipt(): Promise<TransactionReceiptSummary | null> {
+    return { status: "success", blockNumber: 100n };
+  }
 }
 
 async function setupApi() {
@@ -60,6 +103,16 @@ async function setupApi() {
   });
 
   return { app, repo, merchant, apiKey };
+}
+
+async function dashboardToken(app: ReturnType<typeof createApp>) {
+  const response = await app.request("/dashboard/api/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: "test-dashboard-password" })
+  });
+  const body = (await response.json()) as { token: string };
+  return body.token;
 }
 
 async function setupTronApi() {
@@ -218,5 +271,62 @@ describe("Hono API", () => {
     expect(response.status).toBe(201);
     const depositAddress = (await response.json()) as DepositAddressResponse;
     expect(depositAddress.address).toMatch(/^T[1-9A-HJ-NP-Za-km-z]{33}$/);
+  });
+
+  it("serves dashboard login, data, generated wallets, and manual wallet transactions", async () => {
+    const repo = new MemoryRepository();
+    const config = createTestConfig();
+    const chainProvider = new MockChainProvider();
+    const app = createApp({ repo, config, chainProvider });
+    const login = await app.request("/dashboard/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "wrong-password" })
+    });
+
+    expect(login.status).toBe(401);
+    const token = await dashboardToken(app);
+    const merchantResponse = await app.request("/dashboard/api/merchants", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dashboard Merchant" })
+    });
+    const merchant = (await merchantResponse.json()) as MerchantResponse;
+
+    const gasWallet = await app.request("/dashboard/api/wallets/gas", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ network: "ethereum" })
+    });
+    expect(gasWallet.status).toBe(201);
+
+    const treasuryWallet = await app.request("/dashboard/api/wallets/treasury", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ merchantId: merchant.id, network: "ethereum", token: "USDT" })
+    });
+    expect(treasuryWallet.status).toBe(201);
+    const treasuryBody = (await treasuryWallet.json()) as { operationalWallet: { id: string; privateKey?: string } };
+    expect(treasuryBody.operationalWallet.privateKey).toBeUndefined();
+
+    const transfer = await app.request("/dashboard/api/wallet-transactions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        sourceWalletId: treasuryBody.operationalWallet.id,
+        asset: "USDT",
+        toAddress: testTreasuryAddress,
+        amount: "12.5"
+      })
+    });
+    expect(transfer.status).toBe(201);
+    expect(chainProvider.tokenTransfers).toEqual([{ to: testTreasuryAddress, value: 12_500_000n }]);
+
+    const data = await app.request("/dashboard/api/data", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const dataBody = (await data.json()) as { operationalWallets: unknown[]; walletTransactions: unknown[] };
+    expect(dataBody.operationalWallets).toHaveLength(2);
+    expect(dataBody.walletTransactions).toHaveLength(1);
   });
 });

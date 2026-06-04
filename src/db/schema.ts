@@ -87,6 +87,29 @@ export const treasuryWallets = pgTable(
   })
 );
 
+export const operationalWallets = pgTable(
+  "operational_wallets",
+  {
+    id: uuid("id").primaryKey(),
+    scopeKey: text("scope_key").notNull(),
+    merchantId: uuid("merchant_id").references(() => merchants.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(),
+    network: text("network").notNull(),
+    token: text("token"),
+    address: text("address").notNull(),
+    privateKeyEncrypted: text("private_key_encrypted").notNull(),
+    label: text("label").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    scopeUnique: uniqueIndex("operational_wallets_scope_unique").on(table.scopeKey),
+    merchantIdx: index("operational_wallets_merchant_idx").on(table.merchantId),
+    networkIdx: index("operational_wallets_network_idx").on(table.network)
+  })
+);
+
 export const depositAddresses = pgTable(
   "deposit_addresses",
   {
@@ -215,6 +238,34 @@ export const sweeps = pgTable(
   (table) => ({
     transferUnique: uniqueIndex("sweeps_transfer_unique").on(table.transferId),
     statusIdx: index("sweeps_status_idx").on(table.status)
+  })
+);
+
+export const walletTransactions = pgTable(
+  "wallet_transactions",
+  {
+    id: uuid("id").primaryKey(),
+    merchantId: uuid("merchant_id").references(() => merchants.id, { onDelete: "set null" }),
+    sourceWalletId: uuid("source_wallet_id")
+      .notNull()
+      .references(() => operationalWallets.id, { onDelete: "restrict" }),
+    network: text("network").notNull(),
+    token: text("token"),
+    asset: text("asset").notNull(),
+    txHash: text("tx_hash"),
+    fromAddress: text("from_address").notNull(),
+    toAddress: text("to_address").notNull(),
+    amountRaw: text("amount_raw").notNull(),
+    amountFormatted: text("amount_formatted").notNull(),
+    status: text("status").notNull(),
+    failureReason: text("failure_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true })
+  },
+  (table) => ({
+    sourceIdx: index("wallet_transactions_source_idx").on(table.sourceWalletId),
+    statusIdx: index("wallet_transactions_status_idx").on(table.status),
+    networkIdx: index("wallet_transactions_network_idx").on(table.network)
   })
 );
 

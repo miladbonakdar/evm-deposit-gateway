@@ -17,6 +17,41 @@ export const configureTreasuryWalletSchema = z.object({
   address: z.string().min(1)
 });
 
+export const dashboardLoginSchema = z.object({
+  username: z.string().trim().min(1).max(120),
+  password: z.string().min(1).max(512)
+});
+
+export const dashboardListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(250).default(100)
+});
+
+export const generateGasWalletSchema = z.object({
+  network: networkSchema,
+  label: z.string().trim().min(1).max(120).optional()
+});
+
+export const generateTreasuryWalletSchema = z.object({
+  merchantId: z.string().uuid(),
+  network: networkSchema,
+  token: tokenSchema,
+  label: z.string().trim().min(1).max(120).optional()
+});
+
+export const registerTreasuryWalletSchema = z.object({
+  merchantId: z.string().uuid(),
+  network: networkSchema,
+  token: tokenSchema,
+  address: z.string().min(1)
+});
+
+export const createWalletTransactionSchema = z.object({
+  sourceWalletId: z.string().uuid(),
+  asset: z.enum(["NATIVE", "USDT", "USDC"]),
+  toAddress: z.string().min(1),
+  amount: z.string().trim().regex(/^\d+(\.\d+)?$/, "Amount must be a positive decimal string")
+});
+
 export const createDepositAddressSchema = z.object({
   network: networkSchema,
   token: tokenSchema,

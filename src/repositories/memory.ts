@@ -8,13 +8,17 @@ import type {
   Merchant,
   MerchantApiKey,
   NetworkSlug,
+  OperationalWallet,
+  OperationalWalletPurpose,
   Sweep,
   TokenSymbol,
   TokenTransfer,
   TransactionStatus,
   TreasuryWallet,
+  TransferStatus,
   WebhookConfig,
-  WebhookEvent
+  WebhookEvent,
+  WalletTransaction
 } from "../types/domain.js";
 import type {
   CreateApiKeyInput,
@@ -25,8 +29,13 @@ import type {
   CreateSweepInput,
   CreateTokenTransferInput,
   CreateWebhookEventInput,
+  CreateWalletTransactionInput,
+  ListDepositAddressesFilter,
   ListDepositsFilter,
+  ListOperationalWalletsFilter,
+  ListTransfersFilter,
   Repository,
+  UpsertOperationalWalletInput,
   UpsertTreasuryWalletInput,
   UpsertWebhookConfigInput
 } from "./repository.js";
@@ -47,6 +56,15 @@ function addressKey(network: NetworkSlug, token: TokenSymbol, address: ChainAddr
   return `${assetKey(network, token)}:${address}`;
 }
 
+function operationalWalletScopeKey(
+  purpose: OperationalWalletPurpose,
+  merchantId: string | null,
+  network: NetworkSlug,
+  token: TokenSymbol | null
+): string {
+  return [purpose, merchantId ?? "platform", network, token ?? "native"].join(":");
+}
+
 export class MemoryRepository implements Repository {
   private readonly merchants = new Map<string, Merchant>();
   private readonly apiKeys = new Map<string, MerchantApiKey>();
@@ -54,6 +72,8 @@ export class MemoryRepository implements Repository {
   private readonly nonces = new Set<string>();
   private readonly webhookConfigs = new Map<string, WebhookConfig>();
   private readonly treasuryWallets = new Map<string, TreasuryWallet>();
+  private readonly operationalWallets = new Map<string, OperationalWallet>();
+  private readonly operationalWalletsByScope = new Map<string, string>();
   private readonly depositAddresses = new Map<string, DepositAddress>();
   private readonly depositAddressesByAddress = new Map<string, string>();
   private readonly chainCursors = new Map<string, ChainCursor>();
@@ -63,6 +83,7 @@ export class MemoryRepository implements Repository {
   private readonly gasTopUpsByTransfer = new Map<string, string>();
   private readonly sweeps = new Map<string, Sweep>();
   private readonly sweepsByTransfer = new Map<string, string>();
+  private readonly walletTransactions = new Map<string, WalletTransaction>();
   private readonly webhookEvents = new Map<string, WebhookEvent>();
   private readonly idempotencyRecords = new Map<string, IdempotencyRecord>();
 
@@ -81,6 +102,14 @@ export class MemoryRepository implements Repository {
 
   async getMerchant(id: string): Promise<Merchant | null> {
     return clone(this.merchants.get(id) ?? null);
+  }
+
+  async listMerchants(limit: number): Promise<Merchant[]> {
+    return clone(
+      [...this.merchants.values()]
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .slice(0, limit)
+    );
   }
 
   async createApiKey(input: CreateApiKeyInput): Promise<MerchantApiKey> {
@@ -179,6 +208,60 @@ export class MemoryRepository implements Repository {
     return clone(this.treasuryWallets.get(`${merchantId}:${assetKey(network, token)}`) ?? null);
   }
 
+  async listTreasuryWallets(merchantId: string | undefined, limit: number): Promise<TreasuryWallet[]> {
+    return clone(
+      [...this.treasuryWallets.values()]
+        .filter((wallet) => !merchantId || wallet.merchantId === merchantId)
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
+  async upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet> {
+    const existingId = this.operationalWalletsByScope.get(input.scopeKey);
+    const existing = existingId ? this.operationalWallets.get(existingId) : undefined;
+    const timestamp = now();
+    const wallet: OperationalWallet = {
+      id: existing?.id ?? input.id,
+      scopeKey: input.scopeKey,
+      merchantId: input.merchantId,
+      purpose: input.purpose,
+      network: input.network,
+      token: input.token,
+      address: input.address,
+      privateKeyEncrypted: input.privateKeyEncrypted,
+      label: input.label,
+      status: "active",
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+    this.operationalWallets.set(wallet.id, wallet);
+    this.operationalWalletsByScope.set(wallet.scopeKey, wallet.id);
+    return clone(wallet);
+  }
+
+  async getOperationalWallet(id: string): Promise<OperationalWallet | null> {
+    return clone(this.operationalWallets.get(id) ?? null);
+  }
+
+  async getOperationalGasWallet(network: NetworkSlug): Promise<OperationalWallet | null> {
+    const id = this.operationalWalletsByScope.get(operationalWalletScopeKey("gas", null, network, null));
+    return clone(id ? (this.operationalWallets.get(id) ?? null) : null);
+  }
+
+  async listOperationalWallets(filter: ListOperationalWalletsFilter): Promise<OperationalWallet[]> {
+    return clone(
+      [...this.operationalWallets.values()]
+        .filter((wallet) => filter.includeDisabled || wallet.status === "active")
+        .filter((wallet) => !filter.merchantId || wallet.merchantId === filter.merchantId)
+        .filter((wallet) => !filter.purpose || wallet.purpose === filter.purpose)
+        .filter((wallet) => !filter.network || wallet.network === filter.network)
+        .filter((wallet) => !filter.token || wallet.token === filter.token)
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+        .slice(0, filter.limit)
+    );
+  }
+
   async createDepositAddress(input: CreateDepositAddressInput): Promise<DepositAddress> {
     const timestamp = now();
     const depositAddress: DepositAddress = {
@@ -215,6 +298,16 @@ export class MemoryRepository implements Repository {
   ): Promise<DepositAddress | null> {
     const id = this.depositAddressesByAddress.get(addressKey(network, token, address));
     return clone(id ? (this.depositAddresses.get(id) ?? null) : null);
+  }
+
+  async listDepositAddresses(filter: ListDepositAddressesFilter): Promise<DepositAddress[]> {
+    return clone(
+      [...this.depositAddresses.values()]
+        .filter((address) => !filter.merchantId || address.merchantId === filter.merchantId)
+        .filter((address) => !filter.status || address.status === filter.status)
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .slice(0, filter.limit)
+    );
   }
 
   async expireDepositAddresses(currentTime: Date): Promise<DepositAddress[]> {
@@ -280,6 +373,16 @@ export class MemoryRepository implements Repository {
     );
   }
 
+  async listTokenTransfers(filter: ListTransfersFilter): Promise<TokenTransfer[]> {
+    return clone(
+      [...this.tokenTransfers.values()]
+        .filter((transfer) => !filter.merchantId || transfer.merchantId === filter.merchantId)
+        .filter((transfer) => !filter.status || transfer.status === filter.status)
+        .sort((left, right) => right.detectedAt.getTime() - left.detectedAt.getTime())
+        .slice(0, filter.limit)
+    );
+  }
+
   async listTransfersReadyForConfirmation(
     network: NetworkSlug,
     token: TokenSymbol,
@@ -333,6 +436,14 @@ export class MemoryRepository implements Repository {
     return clone([...this.gasTopUps.values()].filter((topUp) => topUp.status === "submitted").slice(0, limit));
   }
 
+  async listGasTopUps(limit: number): Promise<GasTopUp[]> {
+    return clone(
+      [...this.gasTopUps.values()]
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
   async updateGasTopUpStatus(
     id: string,
     status: TransactionStatus,
@@ -376,6 +487,14 @@ export class MemoryRepository implements Repository {
     return clone([...this.sweeps.values()].filter((sweep) => sweep.status === "submitted").slice(0, limit));
   }
 
+  async listSweeps(limit: number): Promise<Sweep[]> {
+    return clone(
+      [...this.sweeps.values()]
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
   async updateSweepStatus(
     id: string,
     status: TransactionStatus,
@@ -391,6 +510,51 @@ export class MemoryRepository implements Repository {
     sweep.failureReason = failureReason ?? null;
     sweep.confirmedAt = status === "confirmed" ? now() : sweep.confirmedAt;
     return clone(sweep);
+  }
+
+  async createWalletTransaction(input: CreateWalletTransactionInput): Promise<WalletTransaction> {
+    const transaction: WalletTransaction = {
+      ...input,
+      failureReason: input.failureReason ?? null,
+      createdAt: now(),
+      confirmedAt: input.status === "confirmed" ? now() : null
+    };
+    this.walletTransactions.set(transaction.id, transaction);
+    return clone(transaction);
+  }
+
+  async listWalletTransactions(limit: number): Promise<WalletTransaction[]> {
+    return clone(
+      [...this.walletTransactions.values()]
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
+  async listSubmittedWalletTransactions(limit: number): Promise<WalletTransaction[]> {
+    return clone(
+      [...this.walletTransactions.values()]
+        .filter((transaction) => transaction.status === "submitted")
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
+  async updateWalletTransactionStatus(
+    id: string,
+    status: TransactionStatus,
+    txHash: string | null,
+    failureReason?: string | null
+  ): Promise<WalletTransaction | null> {
+    const transaction = this.walletTransactions.get(id);
+    if (!transaction) {
+      return null;
+    }
+    transaction.status = status;
+    transaction.txHash = txHash;
+    transaction.failureReason = failureReason ?? null;
+    transaction.confirmedAt = status === "confirmed" ? now() : transaction.confirmedAt;
+    return clone(transaction);
   }
 
   async createWebhookEvent(input: CreateWebhookEventInput): Promise<WebhookEvent> {
@@ -415,6 +579,14 @@ export class MemoryRepository implements Repository {
       [...this.webhookEvents.values()]
         .filter((event) => event.status === "pending" && event.nextAttemptAt <= currentTime)
         .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
+  async listWebhookEvents(limit: number): Promise<WebhookEvent[]> {
+    return clone(
+      [...this.webhookEvents.values()]
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
         .slice(0, limit)
     );
   }

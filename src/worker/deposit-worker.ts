@@ -26,6 +26,7 @@ export class DepositWorker {
     await this.confirmPendingTransfers();
     await this.confirmGasTopUps();
     await this.confirmSweeps();
+    await this.confirmWalletTransactions();
   }
 
   private async expireDepositAddresses(): Promise<void> {
@@ -220,7 +221,8 @@ export class DepositWorker {
         return;
       }
 
-      if (!network.gasWalletPrivateKey) {
+      const gasWalletPrivateKey = await this.getGasWalletPrivateKey(network.slug, network.gasWalletPrivateKey);
+      if (!gasWalletPrivateKey) {
         const { gasTopUp } = await this.deps.repo.createGasTopUpIfNotExists({
           id: newId(),
           transferId: transfer.id,
@@ -241,7 +243,7 @@ export class DepositWorker {
       try {
         const txHash = await this.deps.chainProvider.sendNativeTransfer(
           network,
-          network.gasWalletPrivateKey,
+          gasWalletPrivateKey,
           depositAddress.address,
           network.gasTopUpWei
         );
@@ -282,6 +284,46 @@ export class DepositWorker {
     }
 
     await this.submitSweep(transfer);
+  }
+
+  private async confirmWalletTransactions(): Promise<void> {
+    const submitted = await this.deps.repo.listSubmittedWalletTransactions(100);
+
+    for (const transaction of submitted) {
+      if (!transaction.txHash) {
+        continue;
+      }
+
+      const network = this.deps.networks[transaction.network];
+      if (!network) {
+        continue;
+      }
+
+      const receipt = await this.deps.chainProvider.getTransactionReceipt(network, transaction.txHash);
+      if (!receipt) {
+        continue;
+      }
+
+      await this.deps.repo.updateWalletTransactionStatus(
+        transaction.id,
+        receipt.status === "success" ? "confirmed" : "failed",
+        transaction.txHash,
+        receipt.status === "success" ? null : "Wallet transaction reverted"
+      );
+    }
+  }
+
+  private async getGasWalletPrivateKey(network: NetworkSlug, envPrivateKey: string | undefined): Promise<string | undefined> {
+    if (envPrivateKey) {
+      return envPrivateKey;
+    }
+
+    const wallet = await this.deps.repo.getOperationalGasWallet(network);
+    if (!wallet) {
+      return undefined;
+    }
+
+    return this.deps.encryptor.decryptString(wallet.privateKeyEncrypted);
   }
 
   private async submitSweep(transfer: TokenTransfer): Promise<void> {

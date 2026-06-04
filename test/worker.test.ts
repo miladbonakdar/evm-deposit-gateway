@@ -7,6 +7,8 @@ import { DefaultWebhookService } from "../src/services/webhook-service.js";
 import { DepositWorker } from "../src/worker/deposit-worker.js";
 import type { ChainProvider, TokenTransferLog, TransactionReceiptSummary } from "../src/worker/chain-provider.js";
 import { createTestConfig, testTreasuryAddress } from "./helpers.js";
+import { newId } from "../src/utils/id.js";
+import { operationalWalletScopeKey } from "../src/utils/wallet.js";
 
 class MockChainProvider implements ChainProvider {
   latestBlock = 120n;
@@ -168,5 +170,112 @@ describe("deposit worker", () => {
       expect.arrayContaining(["gas.topup.submitted", "gas.topup.confirmed", "sweep.submitted", "sweep.confirmed"])
     );
     expect((await repo.listTransfersForMerchant(merchant.id, { limit: 10 }))[0]?.status).toBe("confirmed");
+  });
+
+  it("uses an encrypted generated gas wallet when env gas key is not configured", async () => {
+    const config = createTestConfig({
+      networks: createTestConfig().networks
+    });
+    if (config.networks.ethereum) {
+      config.networks.ethereum.gasWalletPrivateKey = undefined;
+    }
+    const repo = new MemoryRepository();
+    const webhooks = new DefaultWebhookService(repo, config.encryptor);
+    const merchantService = new MerchantService(repo, config.encryptor, config.networks);
+    const depositService = new DepositService(repo, config.encryptor, config.networks, webhooks);
+    const merchant = await merchantService.createMerchant("Stored Gas");
+    await repo.upsertWebhookConfig({
+      merchantId: merchant.id,
+      url: "https://example.com/webhook",
+      active: true,
+      secretEncrypted: config.encryptor.encryptString("merchant-webhook-secret")
+    });
+    await merchantService.configureTreasuryWallet(merchant.id, "ethereum", "USDT", testTreasuryAddress);
+    await repo.upsertOperationalWallet({
+      id: newId(),
+      scopeKey: operationalWalletScopeKey("gas", null, "ethereum", null),
+      merchantId: null,
+      purpose: "gas",
+      network: "ethereum",
+      token: null,
+      address: "0x0000000000000000000000000000000000000aaa",
+      privateKeyEncrypted: config.encryptor.encryptString(`0x${"3".repeat(64)}`),
+      label: "Stored gas wallet"
+    });
+    const depositAddress = await depositService.createDepositAddress({
+      merchantId: merchant.id,
+      network: "ethereum",
+      token: "USDT",
+      ttlSeconds: 3600
+    });
+    const evm = new MockChainProvider();
+    evm.nativeBalance = 0n;
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"e".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"f".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: depositAddress.address,
+      value: 10_000_000n
+    });
+    const worker = new DepositWorker({
+      repo,
+      networks: config.networks,
+      encryptor: config.encryptor,
+      chainProvider: evm,
+      webhooks
+    });
+
+    await worker.runOnce();
+
+    expect(evm.nativeTransfers).toEqual([{ to: depositAddress.address, value: 5_000_000_000_000_000n }]);
+  });
+
+  it("confirms dashboard wallet transactions", async () => {
+    const config = createTestConfig();
+    const repo = new MemoryRepository();
+    const webhooks = new DefaultWebhookService(repo, config.encryptor);
+    const evm = new MockChainProvider();
+    const wallet = await repo.upsertOperationalWallet({
+      id: newId(),
+      scopeKey: operationalWalletScopeKey("gas", null, "ethereum", null),
+      merchantId: null,
+      purpose: "gas",
+      network: "ethereum",
+      token: null,
+      address: "0x0000000000000000000000000000000000000aaa",
+      privateKeyEncrypted: config.encryptor.encryptString(`0x${"3".repeat(64)}`),
+      label: "Gas wallet"
+    });
+    const txHash = `0x${"8".repeat(64)}`;
+    await repo.createWalletTransaction({
+      id: newId(),
+      merchantId: null,
+      sourceWalletId: wallet.id,
+      network: "ethereum",
+      token: null,
+      asset: "NATIVE",
+      txHash,
+      fromAddress: wallet.address,
+      toAddress: testTreasuryAddress,
+      amountRaw: "1000000000000000",
+      amountFormatted: "0.001",
+      status: "submitted"
+    });
+    evm.receipts.set(txHash, { status: "success", blockNumber: evm.latestBlock });
+    const worker = new DepositWorker({
+      repo,
+      networks: config.networks,
+      encryptor: config.encryptor,
+      chainProvider: evm,
+      webhooks
+    });
+
+    await worker.runOnce();
+
+    expect((await repo.listWalletTransactions(10))[0]?.status).toBe("confirmed");
   });
 });

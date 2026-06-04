@@ -1,14 +1,14 @@
 # EVM Deposit Gateway
 
-API-only Hono + TypeScript service for temporary USDT/USDC deposit addresses on configured EVM and TRON networks.
+Hono + TypeScript service for temporary USDT/USDC deposit addresses on configured EVM and TRON networks, with an admin operations dashboard.
 
-The service is intentionally API-only. It creates temporary merchant deposit wallets, watches ERC-20/TRC-20 `Transfer` activity, sends signed lifecycle webhooks, tops up native gas when needed, and sweeps token balances to configured treasury wallets.
+The service creates temporary merchant deposit wallets, watches ERC-20/TRC-20 `Transfer` activity, sends signed lifecycle webhooks, tops up native gas when needed, sweeps token balances to configured treasury wallets, and gives admins a browser dashboard for monitoring and controlled wallet operations.
 
 ## What it does
 
 EVM Deposit Gateway lets a merchant application request a temporary wallet address for an enabled token/network pair, such as USDT on Ethereum or TRON. A payer sends funds to that address. The worker detects the token transfer, confirms it after the configured block depth, notifies the merchant by signed webhook, funds the temporary wallet with native gas if needed, and sweeps the full token balance to the merchant treasury wallet.
 
-The v1 scope is deposits only. It does not provide exchange, withdrawal, customer account, or custody UI.
+The v1 scope is stablecoin deposits plus admin-controlled treasury/gas wallet operations. It does not provide exchange, customer account balances, or end-user wallet accounts.
 
 ## Flow
 
@@ -18,6 +18,7 @@ The v1 scope is deposits only. It does not provide exchange, withdrawal, custome
 4. API generates an encrypted temporary wallet and returns the public address plus optional QR output.
 5. Worker scans enabled ERC-20/TRC-20 transfers and matches deposits to generated addresses.
 6. Worker emits lifecycle webhooks, tops up gas when required, and sweeps tokens to treasury.
+7. Admins use `/dashboard` to monitor deposits, webhooks, gas top-ups, sweeps, and dashboard-submitted wallet transactions.
 
 ## Features
 
@@ -29,6 +30,9 @@ The v1 scope is deposits only. It does not provide exchange, withdrawal, custome
 - `viem` for EVM address generation, log polling, gas top-ups, and token sweeps
 - `tronweb` for TRON address generation, event polling, TRX top-ups, and TRC-20 sweeps
 - Signed webhook outbox with retries
+- React admin dashboard at `/dashboard`
+- Dashboard-generated encrypted gas and treasury wallets
+- Dashboard-submitted transfers from generated wallets to saved or external addresses
 - OpenAPI JSON at `/openapi.json`
 
 ## More docs
@@ -77,7 +81,7 @@ docker compose -f docker-compose.yml -f docker-compose.testnet.yml up --build
 ## Local development checklist
 
 1. Create a Postgres database.
-2. Fill `.env` with `DATABASE_URL`, `ADMIN_API_KEY`, and `ENCRYPTION_MASTER_KEY_BASE64`.
+2. Fill `.env` with `DATABASE_URL`, `ADMIN_API_KEY`, dashboard login variables, and `ENCRYPTION_MASTER_KEY_BASE64`.
 3. Configure at least one network RPC URL and token contract pair.
 4. Run `npm run db:migrate`, or let Docker Compose run the `migrate` service.
 5. Start API and worker in separate processes, or use Docker Compose.
@@ -89,6 +93,9 @@ Required:
 
 - `DATABASE_URL`
 - `ADMIN_API_KEY`
+- `ADMIN_DASHBOARD_USERNAME`
+- `ADMIN_DASHBOARD_PASSWORD`
+- `ADMIN_SESSION_SECRET`
 - `ENCRYPTION_MASTER_KEY_BASE64`, a 32-byte base64 key
 
 Enable a network by setting `RPC_URL_<NETWORK>` and at least one token contract plus decimals, for example:
@@ -103,6 +110,33 @@ GAS_WALLET_PRIVATE_KEY_ETHEREUM=0x...
 The supported v1 mainnet slugs are `ethereum`, `bsc`, `polygon`, `arbitrum`, `optimism`, `base`, and `tron`.
 
 The supported v1 testnet slugs are `sepolia`, `bscTestnet`, `polygonAmoy`, `arbitrumSepolia`, `optimismSepolia`, `baseSepolia`, and `nile`.
+
+## Admin Dashboard
+
+The dashboard is served by the API process at:
+
+```text
+http://localhost:3000/dashboard
+```
+
+Login uses:
+
+- `ADMIN_DASHBOARD_USERNAME`
+- `ADMIN_DASHBOARD_PASSWORD`
+- `ADMIN_SESSION_SECRET`
+- `ADMIN_SESSION_TTL_SECONDS`
+
+Dashboard capabilities:
+
+- View enabled networks, merchants, deposit addresses, deposits, gas top-ups, sweeps, webhook events, and dashboard wallet transactions.
+- Create merchants.
+- Generate encrypted platform gas wallets per network.
+- Generate encrypted merchant treasury wallets per network/token. This also configures the merchant treasury address used by automatic sweeps.
+- Register an externally managed treasury address without storing a private key.
+- Submit native-token transfers from generated gas wallets.
+- Submit treasury token transfers from generated treasury wallets to saved or external addresses.
+
+Generated dashboard wallet private keys are encrypted at rest and are never returned in API or dashboard responses. Only generated operational wallets are spendable by the dashboard. A treasury address registered without a stored private key remains a sweep destination only.
 
 ## Admin API
 

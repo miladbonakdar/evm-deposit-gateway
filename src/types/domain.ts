@@ -26,6 +26,9 @@ export type DepositAddressStatus = "active" | "expired";
 export type TransferStatus = "detected" | "confirmed" | "late";
 export type TransactionStatus = "submitted" | "confirmed" | "failed";
 export type WebhookStatus = "pending" | "sent" | "failed";
+export type OperationalWalletPurpose = "gas" | "treasury";
+export type OperationalWalletStatus = "active" | "disabled";
+export type WalletTransactionAsset = TokenSymbol | "NATIVE";
 export type WebhookEventType =
   | "wallet.created"
   | "wallet.expired"
@@ -72,6 +75,21 @@ export interface TreasuryWallet {
   network: NetworkSlug;
   token: TokenSymbol;
   address: ChainAddress;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OperationalWallet {
+  id: string;
+  scopeKey: string;
+  merchantId: string | null;
+  purpose: OperationalWalletPurpose;
+  network: NetworkSlug;
+  token: TokenSymbol | null;
+  address: ChainAddress;
+  privateKeyEncrypted: string;
+  label: string;
+  status: OperationalWalletStatus;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -143,6 +161,24 @@ export interface Sweep {
   amountRaw: string;
   amountFormatted: string;
   toAddress: ChainAddress;
+  status: TransactionStatus;
+  failureReason: string | null;
+  createdAt: Date;
+  confirmedAt: Date | null;
+}
+
+export interface WalletTransaction {
+  id: string;
+  merchantId: string | null;
+  sourceWalletId: string;
+  network: NetworkSlug;
+  token: TokenSymbol | null;
+  asset: WalletTransactionAsset;
+  txHash: ChainTxHash | null;
+  fromAddress: ChainAddress;
+  toAddress: ChainAddress;
+  amountRaw: string;
+  amountFormatted: string;
   status: TransactionStatus;
   failureReason: string | null;
   createdAt: Date;

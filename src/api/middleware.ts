@@ -1,25 +1,15 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppConfig } from "../config/env.js";
 import { badRequest, forbidden, unauthorized } from "../errors.js";
+import { constantTimeStringEqual, verifyAdminSessionToken, type AdminSessionPayload } from "../security/admin-session.js";
 import { buildCanonicalRequest, signCanonicalRequest, timingSafeEqualHex } from "../security/hmac.js";
 import type { AuthenticatedMerchant } from "../types/domain.js";
 import type { Repository } from "../repositories/repository.js";
 
 export interface AppVariables {
   auth: AuthenticatedMerchant;
+  adminSession: AdminSessionPayload;
   rawBody: Buffer;
-}
-
-function constantTimeStringEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 export function adminAuthMiddleware(adminApiKey: string): MiddlewareHandler<{ Variables: AppVariables }> {
@@ -33,6 +23,22 @@ export function adminAuthMiddleware(adminApiKey: string): MiddlewareHandler<{ Va
       throw unauthorized("invalid_admin_api_key", "Missing or invalid admin API key");
     }
 
+    await next();
+  };
+}
+
+export function dashboardAuthMiddleware(
+  config: Pick<AppConfig, "adminSessionSecret">
+): MiddlewareHandler<{ Variables: AppVariables }> {
+  return async (c, next) => {
+    const authorization = c.req.header("authorization");
+    const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
+
+    if (!token) {
+      throw unauthorized("missing_admin_session", "Missing admin session");
+    }
+
+    c.set("adminSession", verifyAdminSessionToken(token, config.adminSessionSecret));
     await next();
   };
 }

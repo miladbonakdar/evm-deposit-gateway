@@ -1,6 +1,3 @@
-import { privateKeyToAccount } from "viem/accounts";
-import { generatePrivateKey } from "viem/accounts";
-import { TronWeb } from "tronweb";
 import { assertEnabledToken, type SupportedNetworks } from "../config/networks.js";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import type { Encryptor } from "../security/encryption.js";
@@ -8,6 +5,7 @@ import type { DepositAddress, NetworkSlug, TokenSymbol, TokenTransfer } from "..
 import { normalizeAddress } from "../utils/address.js";
 import { buildQrResult, type QrFormat } from "../utils/qr.js";
 import { newId } from "../utils/id.js";
+import { generateChainWallet } from "../utils/wallet.js";
 import type { Repository } from "../repositories/repository.js";
 import type { WebhookService } from "./webhook-service.js";
 
@@ -40,7 +38,7 @@ export class DepositService {
       );
     }
 
-    const wallet = await generateWallet(networkConfig.kind);
+    const wallet = await generateChainWallet(networkConfig.kind);
     const ttlSeconds = input.ttlSeconds ?? 86_400;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
     const depositAddress = await this.repo.createDepositAddress({
@@ -129,17 +127,6 @@ export class DepositService {
       responseBody
     });
   }
-}
-
-async function generateWallet(kind: "evm" | "tron"): Promise<{ address: string; privateKey: string }> {
-  if (kind === "evm") {
-    const privateKey = generatePrivateKey();
-    const account = privateKeyToAccount(privateKey);
-    return { address: account.address, privateKey };
-  }
-
-  const account = await TronWeb.createAccount();
-  return { address: account.address.base58, privateKey: account.privateKey };
 }
 
 export function publicDepositAddress(depositAddress: DepositAddress) {

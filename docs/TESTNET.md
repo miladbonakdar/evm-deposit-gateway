@@ -29,14 +29,17 @@ cp .env.testnet.example .env.testnet
 Fill:
 
 - `ADMIN_API_KEY`
+- `ADMIN_DASHBOARD_USERNAME`
+- `ADMIN_DASHBOARD_PASSWORD`
+- `ADMIN_SESSION_SECRET`
 - `ENCRYPTION_MASTER_KEY_BASE64`
 - `RPC_URL_<TESTNET>`
 - `EVENT_SERVER_URL_<TESTNET>` for TRON networks when the event server differs from the full node
 - `USDT_CONTRACT_<TESTNET>` or `USDC_CONTRACT_<TESTNET>`
 - matching decimals
-- `GAS_WALLET_PRIVATE_KEY_<TESTNET>`
+- `GAS_WALLET_PRIVATE_KEY_<TESTNET>` or generate a gas wallet in `/dashboard`
 
-Fund the gas wallet with native testnet gas.
+Fund the configured or generated gas wallet with native testnet gas.
 
 ## Run Testnet Stack With Docker
 
@@ -55,15 +58,17 @@ APP_ENV_FILE=.env.testnet.example docker compose -f docker-compose.yml -f docker
 ## Testnet Smoke Flow
 
 1. Start the stack.
-2. Create a merchant with the admin API.
-3. Create a merchant API key.
-4. Configure webhook URL and secret.
-5. Configure treasury wallet for the testnet/token pair.
-6. Create a deposit address with the merchant API.
-7. Send a small test token amount to the generated address.
-8. Watch worker logs for detection, confirmation, gas top-up, and sweep.
-9. Verify signed webhooks are received.
-10. Verify the treasury wallet receives the swept token balance.
+2. Open `/dashboard` or use the admin API.
+3. Create a merchant.
+4. Create a merchant API key with the admin API.
+5. Configure webhook URL and secret.
+6. Generate or register a treasury wallet for the testnet/token pair.
+7. Generate a gas wallet in the dashboard if no env gas wallet is configured.
+8. Create a deposit address with the merchant API.
+9. Send a small test token amount to the generated address.
+10. Watch worker logs for detection, confirmation, gas top-up, and sweep.
+11. Verify signed webhooks are received.
+12. Verify the treasury wallet receives the swept token balance.
 
 ## Example Testnet Deposit Request
 

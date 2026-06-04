@@ -22,10 +22,13 @@ cp .env.example .env
 Fill the required values in `.env`:
 
 - `ADMIN_API_KEY`
+- `ADMIN_DASHBOARD_USERNAME`
+- `ADMIN_DASHBOARD_PASSWORD`
+- `ADMIN_SESSION_SECRET`
 - `ENCRYPTION_MASTER_KEY_BASE64`
 - at least one `RPC_URL_*`
 - at least one token contract and decimals for that network
-- gas wallet private key for any network that needs automatic gas top-ups
+- gas wallet private key or a generated dashboard gas wallet for any network that needs automatic gas top-ups
 
 Then run:
 
@@ -37,6 +40,12 @@ The API will be available at:
 
 ```text
 http://localhost:3000
+```
+
+The dashboard will be available at:
+
+```text
+http://localhost:3000/dashboard
 ```
 
 Health check:
@@ -93,7 +102,7 @@ APP_ENV_FILE=.env.example docker compose config
 
 - Do not use the Compose default Postgres password in production.
 - Prefer managed Postgres for production.
-- Treat gas wallet private keys as production secrets.
+- Treat gas wallet private keys, dashboard-generated wallet keys, and the encryption master key as production secrets.
 - Keep API and worker as separate processes.
 - Run only one worker until Postgres advisory locks are added for multi-worker scan coordination.
 - Monitor worker logs, webhook failures, gas wallet balances, and stuck submitted transactions.

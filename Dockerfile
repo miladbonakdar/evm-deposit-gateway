@@ -5,7 +5,8 @@ RUN npm ci
 
 FROM deps AS build
 WORKDIR /app
-COPY tsconfig.json tsconfig.build.json ./
+COPY tsconfig.json tsconfig.build.json vite.config.ts ./
+COPY dashboard ./dashboard
 COPY src ./src
 COPY drizzle ./drizzle
 RUN npm run build && npm prune --omit=dev
@@ -20,6 +21,7 @@ COPY --from=build --chown=app:app /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --from=build --chown=app:app /app/drizzle ./drizzle
+COPY --from=build --chown=app:app /app/public ./public
 
 USER app
 EXPOSE 3000
