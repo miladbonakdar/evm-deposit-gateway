@@ -291,6 +291,44 @@ select:focus {
   min-width: 240px;
 }
 
+.checkbox-row {
+  min-height: 40px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 20px;
+}
+
+.checkbox-row input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.secret-box {
+  display: grid;
+  gap: 10px;
+  margin: 0 16px 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 12px;
+}
+
+.secret-box div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.secret-box span {
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

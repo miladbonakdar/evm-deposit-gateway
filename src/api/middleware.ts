@@ -28,7 +28,7 @@ export function adminAuthMiddleware(adminApiKey: string): MiddlewareHandler<{ Va
 }
 
 export function dashboardAuthMiddleware(
-  config: Pick<AppConfig, "adminSessionSecret">
+  config: Pick<AppConfig, "adminDashboardUsername" | "adminSessionSecret">
 ): MiddlewareHandler<{ Variables: AppVariables }> {
   return async (c, next) => {
     const authorization = c.req.header("authorization");
@@ -38,7 +38,12 @@ export function dashboardAuthMiddleware(
       throw unauthorized("missing_admin_session", "Missing admin session");
     }
 
-    c.set("adminSession", verifyAdminSessionToken(token, config.adminSessionSecret));
+    const session = verifyAdminSessionToken(token, config.adminSessionSecret);
+    if (session.sub !== config.adminDashboardUsername) {
+      throw unauthorized("invalid_admin_session", "Invalid admin session");
+    }
+
+    c.set("adminSession", session);
     await next();
   };
 }

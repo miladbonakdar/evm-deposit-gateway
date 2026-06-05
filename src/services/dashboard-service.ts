@@ -3,11 +3,13 @@ import { badRequest, notFound, unprocessable } from "../errors.js";
 import type { Encryptor } from "../security/encryption.js";
 import type {
   Merchant,
+  MerchantApiKey,
   NetworkSlug,
   OperationalWallet,
   TokenSymbol,
   TokenTransfer,
   TreasuryWallet,
+  WebhookConfig,
   WebhookEvent,
   WalletTransaction,
   WalletTransactionAsset
@@ -82,9 +84,23 @@ export class DashboardService {
   }
 
   async listDashboardData(limit: number) {
-    const [merchants, treasuryWallets, operationalWallets, depositAddresses, deposits, gasTopUps, sweeps, walletTransactions, webhooks] =
+    const [
+      merchants,
+      apiKeys,
+      webhookConfigs,
+      treasuryWallets,
+      operationalWallets,
+      depositAddresses,
+      deposits,
+      gasTopUps,
+      sweeps,
+      walletTransactions,
+      webhooks
+    ] =
       await Promise.all([
         this.repo.listMerchants(limit),
+        this.repo.listApiKeys(undefined, limit),
+        this.repo.listWebhookConfigs(limit),
         this.repo.listTreasuryWallets(undefined, limit),
         this.repo.listOperationalWallets({ includeDisabled: false, limit }),
         this.repo.listDepositAddresses({ limit }),
@@ -97,6 +113,8 @@ export class DashboardService {
 
     return {
       merchants: merchants.map(publicMerchant),
+      apiKeys: apiKeys.map(publicApiKey),
+      webhookConfigs: webhookConfigs.map(publicWebhookConfig),
       networks: enabledNetworks(this.networks).map((network) => ({
         network: network.slug,
         kind: network.kind,
@@ -247,8 +265,8 @@ export class DashboardService {
     const toAddress = normalizeAddress(network, input.toAddress);
     const privateKey = this.encryptor.decryptString(sourceWallet.privateKeyEncrypted);
     const amount = input.asset === "NATIVE"
-      ? parseTokenAmount(input.amount, nativeDecimals(network.kind))
-      : parseTokenAmount(input.amount, assertEnabledToken(this.networks, sourceWallet.network, input.asset).token.decimals);
+      ? parseDashboardAmount(input.amount, nativeDecimals(network.kind))
+      : parseDashboardAmount(input.amount, assertEnabledToken(this.networks, sourceWallet.network, input.asset).token.decimals);
 
     if (amount <= 0n) {
       throw badRequest("invalid_amount", "Amount must be greater than zero");
@@ -295,7 +313,7 @@ export class DashboardService {
         status: "failed",
         failureReason: error instanceof Error ? error.message : "Wallet transaction failed"
       });
-      return publicWalletTransaction(transaction);
+      throw unprocessable("wallet_transaction_failed", "Wallet transaction failed", publicWalletTransaction(transaction));
     }
   }
 
@@ -310,6 +328,19 @@ export class DashboardService {
 
 function nativeDecimals(kind: "evm" | "tron"): number {
   return kind === "tron" ? 6 : 18;
+}
+
+function parseDashboardAmount(amount: string, decimals: number): bigint {
+  const [, fractional = ""] = amount.split(".");
+  if (fractional.length > decimals) {
+    throw badRequest("invalid_amount", `Amount must fit the asset decimal precision of ${decimals}`);
+  }
+
+  try {
+    return parseTokenAmount(amount, decimals);
+  } catch {
+    throw badRequest("invalid_amount", `Amount must fit the asset decimal precision of ${decimals}`);
+  }
 }
 
 function publicMerchant(merchant: Merchant) {
@@ -331,6 +362,27 @@ function publicTreasuryWallet(wallet: TreasuryWallet) {
     address: wallet.address,
     createdAt: wallet.createdAt.toISOString(),
     updatedAt: wallet.updatedAt.toISOString()
+  };
+}
+
+function publicApiKey(apiKey: MerchantApiKey) {
+  return {
+    id: apiKey.id,
+    merchantId: apiKey.merchantId,
+    publicKey: apiKey.publicKey,
+    status: apiKey.status,
+    createdAt: apiKey.createdAt.toISOString(),
+    lastUsedAt: apiKey.lastUsedAt?.toISOString() ?? null
+  };
+}
+
+function publicWebhookConfig(config: WebhookConfig) {
+  return {
+    merchantId: config.merchantId,
+    url: config.url,
+    active: config.active,
+    createdAt: config.createdAt.toISOString(),
+    updatedAt: config.updatedAt.toISOString()
   };
 }
 

@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { unauthorized } from "../errors.js";
 
 export interface AdminSessionPayload {
@@ -9,14 +9,9 @@ export interface AdminSessionPayload {
 }
 
 export function constantTimeStringEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(leftBuffer, rightBuffer);
+  const leftHash = createHash("sha256").update(left).digest();
+  const rightHash = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
 }
 
 export function createAdminSessionToken(username: string, secret: string, ttlSeconds: number): string {
@@ -50,15 +45,24 @@ export function verifyAdminSessionToken(token: string, secret: string): AdminSes
     throw unauthorized("invalid_admin_session", "Invalid admin session");
   }
   const now = Math.floor(Date.now() / 1000);
-  if (!parsed.sub || !parsed.exp || parsed.exp <= now) {
+  if (
+    typeof parsed.sub !== "string" ||
+    typeof parsed.iat !== "number" ||
+    typeof parsed.exp !== "number" ||
+    typeof parsed.jti !== "string"
+  ) {
+    throw unauthorized("invalid_admin_session", "Invalid admin session");
+  }
+
+  if (parsed.exp <= now) {
     throw unauthorized("expired_admin_session", "Admin session has expired");
   }
 
   return {
     sub: parsed.sub,
-    iat: Number(parsed.iat ?? 0),
+    iat: parsed.iat,
     exp: parsed.exp,
-    jti: String(parsed.jti ?? "")
+    jti: parsed.jti
   };
 }
 

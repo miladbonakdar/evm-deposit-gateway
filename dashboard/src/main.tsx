@@ -29,6 +29,23 @@ interface Merchant {
   updatedAt: string;
 }
 
+interface ApiKey {
+  id: string;
+  merchantId: string;
+  publicKey: string;
+  status: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+interface WebhookConfig {
+  merchantId: string;
+  url: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface EnabledNetwork {
   network: string;
   kind: NetworkKind;
@@ -141,6 +158,8 @@ interface WebhookEvent {
 
 interface DashboardData {
   merchants: Merchant[];
+  apiKeys: ApiKey[];
+  webhookConfigs: WebhookConfig[];
   networks: EnabledNetwork[];
   treasuryWallets: TreasuryWallet[];
   operationalWallets: OperationalWallet[];
@@ -221,15 +240,17 @@ function App() {
     setOverview(null);
   }
 
-  async function mutate<T>(request: Promise<T>, successMessage: string) {
+  async function mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined> {
     setError("");
     setNotice("");
     try {
-      await request;
+      const result = await request;
       setNotice(successMessage);
       await refresh();
+      return result;
     } catch (mutationError) {
       setError(errorMessage(mutationError));
+      return undefined;
     }
   }
 
@@ -359,7 +380,7 @@ function DashboardView({
   data: DashboardData;
   overview: Overview;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   switch (tab) {
     case "overview":
@@ -416,14 +437,43 @@ function MerchantsPanel({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [name, setName] = useState("");
+  const [selectedMerchantId, setSelectedMerchantId] = useState(data.merchants[0]?.id ?? "");
+  const [apiKeyResult, setApiKeyResult] = useState<{ apiKey: string; apiSecret: string } | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [webhookActive, setWebhookActive] = useState(true);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     await mutate(apiPost("/dashboard/api/merchants", token, { name }), "Merchant created");
     setName("");
+  }
+
+  async function createApiKey(event: FormEvent) {
+    event.preventDefault();
+    const result = await mutate<{ apiKey: string; apiSecret: string }>(
+      apiPost(`/dashboard/api/merchants/${selectedMerchantId}/api-keys`, token, {}),
+      "API key created"
+    );
+    if (result) {
+      setApiKeyResult(result);
+    }
+  }
+
+  async function configureWebhook(event: FormEvent) {
+    event.preventDefault();
+    await mutate(
+      apiPut(`/dashboard/api/merchants/${selectedMerchantId}/webhook`, token, {
+        url: webhookUrl,
+        secret: webhookSecret || undefined,
+        active: webhookActive
+      }),
+      "Webhook configured"
+    );
+    setWebhookSecret("");
   }
 
   return (
@@ -437,6 +487,38 @@ function MerchantsPanel({
           <button className="primary"><Plus size={16} />Create</button>
         </form>
       </Panel>
+      <div className="split-grid">
+        <Panel title="Create API key">
+          <form className="form-grid" onSubmit={createApiKey}>
+            <Select label="Merchant" value={selectedMerchantId} onChange={setSelectedMerchantId} options={data.merchants.map((item) => item.id)} render={merchantName(data.merchants)} />
+            <button className="primary"><KeyRound size={16} />Create key</button>
+          </form>
+          {apiKeyResult ? (
+            <div className="secret-box">
+              <div><span>API key</span><CopyText value={apiKeyResult.apiKey} /></div>
+              <div><span>API secret</span><CopyText value={apiKeyResult.apiSecret} /></div>
+            </div>
+          ) : null}
+        </Panel>
+        <Panel title="Configure webhook">
+          <form className="form-grid" onSubmit={configureWebhook}>
+            <Select label="Merchant" value={selectedMerchantId} onChange={setSelectedMerchantId} options={data.merchants.map((item) => item.id)} render={merchantName(data.merchants)} />
+            <label>
+              URL
+              <input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} required />
+            </label>
+            <label>
+              Secret
+              <input value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} />
+            </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={webhookActive} onChange={(event) => setWebhookActive(event.target.checked)} />
+              Active
+            </label>
+            <button className="primary"><ShieldCheck size={16} />Save</button>
+          </form>
+        </Panel>
+      </div>
       <Panel title="Merchants">
         <table>
           <thead><tr><th>Name</th><th>Status</th><th>ID</th><th>Created</th></tr></thead>
@@ -452,6 +534,14 @@ function MerchantsPanel({
           </tbody>
         </table>
       </Panel>
+      <div className="split-grid">
+        <Panel title="API keys">
+          <ApiKeysTable apiKeys={data.apiKeys} merchants={data.merchants} />
+        </Panel>
+        <Panel title="Webhook configs">
+          <WebhookConfigsTable configs={data.webhookConfigs} merchants={data.merchants} />
+        </Panel>
+      </div>
     </section>
   );
 }
@@ -463,7 +553,7 @@ function WalletsPanel({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   return (
     <section className="stack">
@@ -491,7 +581,7 @@ function GenerateGasWalletForm({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [network, setNetwork] = useState(data.networks[0]?.network ?? "");
   const [label, setLabel] = useState("");
@@ -523,7 +613,7 @@ function GenerateTreasuryWalletForm({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [merchantId, setMerchantId] = useState(data.merchants[0]?.id ?? "");
   const [network, setNetwork] = useState(data.networks[0]?.network ?? "");
@@ -569,7 +659,7 @@ function RegisterTreasuryWalletForm({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [merchantId, setMerchantId] = useState(data.merchants[0]?.id ?? "");
   const [network, setNetwork] = useState(data.networks[0]?.network ?? "");
@@ -617,7 +707,7 @@ function TransfersPanel({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   return (
     <section className="stack">
@@ -646,7 +736,7 @@ function WalletTransactionForm({
 }: {
   data: DashboardData;
   token: string;
-  mutate<T>(request: Promise<T>, successMessage: string): Promise<void>;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [sourceWalletId, setSourceWalletId] = useState(data.operationalWallets[0]?.id ?? "");
   const sourceWallet = data.operationalWallets.find((wallet) => wallet.id === sourceWalletId);
@@ -753,6 +843,43 @@ function TreasuryWalletsTable({ wallets, merchants }: { wallets: TreasuryWallet[
             <td>{wallet.token}</td>
             <td><CopyText value={wallet.address} /></td>
             <td>{formatDate(wallet.updatedAt)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ApiKeysTable({ apiKeys, merchants }: { apiKeys: ApiKey[]; merchants: Merchant[] }) {
+  return (
+    <table>
+      <thead><tr><th>Merchant</th><th>Status</th><th>Public key</th><th>Last used</th><th>Created</th></tr></thead>
+      <tbody>
+        {apiKeys.map((apiKey) => (
+          <tr key={apiKey.id}>
+            <td>{merchantName(merchants)(apiKey.merchantId)}</td>
+            <td><StatusPill status={apiKey.status} /></td>
+            <td><CopyText value={apiKey.publicKey} /></td>
+            <td>{apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : "-"}</td>
+            <td>{formatDate(apiKey.createdAt)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function WebhookConfigsTable({ configs, merchants }: { configs: WebhookConfig[]; merchants: Merchant[] }) {
+  return (
+    <table>
+      <thead><tr><th>Merchant</th><th>Status</th><th>URL</th><th>Updated</th></tr></thead>
+      <tbody>
+        {configs.map((config) => (
+          <tr key={config.merchantId}>
+            <td>{merchantName(merchants)(config.merchantId)}</td>
+            <td><StatusPill status={config.active ? "active" : "disabled"} /></td>
+            <td><CopyText value={config.url} /></td>
+            <td>{formatDate(config.updatedAt)}</td>
           </tr>
         ))}
       </tbody>
@@ -963,6 +1090,13 @@ async function apiGet<T>(path: string, token: string): Promise<T> {
 async function apiPost<T>(path: string, token: string | undefined, body: unknown): Promise<T> {
   return apiRequest<T>(path, token, {
     method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+async function apiPut<T>(path: string, token: string | undefined, body: unknown): Promise<T> {
+  return apiRequest<T>(path, token, {
+    method: "PUT",
     body: JSON.stringify(body)
   });
 }

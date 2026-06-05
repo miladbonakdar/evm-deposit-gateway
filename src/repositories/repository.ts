@@ -188,6 +188,7 @@ export interface Repository {
   listMerchants(limit: number): Promise<Merchant[]>;
   createApiKey(input: CreateApiKeyInput): Promise<MerchantApiKey>;
   getApiKeyByPublicKey(publicKey: string): Promise<MerchantApiKey | null>;
+  listApiKeys(merchantId: string | undefined, limit: number): Promise<MerchantApiKey[]>;
   updateApiKeyLastUsed(id: string, usedAt: Date): Promise<void>;
   updateApiKeySecret(id: string, secretEncrypted: string): Promise<MerchantApiKey | null>;
   updateApiKeyStatus(id: string, status: ApiKeyStatus): Promise<MerchantApiKey | null>;
@@ -195,6 +196,7 @@ export interface Repository {
 
   upsertWebhookConfig(input: UpsertWebhookConfigInput): Promise<WebhookConfig>;
   getWebhookConfig(merchantId: string): Promise<WebhookConfig | null>;
+  listWebhookConfigs(limit: number): Promise<WebhookConfig[]>;
   upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet>;
   getTreasuryWallet(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<TreasuryWallet | null>;
   listTreasuryWallets(merchantId: string | undefined, limit: number): Promise<TreasuryWallet[]>;

@@ -182,6 +182,16 @@ export class PostgresRepository implements Repository {
     return row ? mapApiKey(row) : null;
   }
 
+  async listApiKeys(merchantId: string | undefined, limit: number): Promise<MerchantApiKey[]> {
+    const rows = await this.db
+      .select()
+      .from(merchantApiKeys)
+      .where(merchantId ? eq(merchantApiKeys.merchantId, merchantId) : undefined)
+      .orderBy(desc(merchantApiKeys.createdAt))
+      .limit(limit);
+    return rows.map(mapApiKey);
+  }
+
   async updateApiKeyLastUsed(id: string, usedAt: Date): Promise<void> {
     await this.db.update(merchantApiKeys).set({ lastUsedAt: usedAt }).where(eq(merchantApiKeys.id, id));
   }
@@ -232,6 +242,11 @@ export class PostgresRepository implements Repository {
     const rows = await this.db.select().from(webhookConfigs).where(eq(webhookConfigs.merchantId, merchantId)).limit(1);
     const row = first(rows);
     return row ? mapWebhookConfig(row) : null;
+  }
+
+  async listWebhookConfigs(limit: number): Promise<WebhookConfig[]> {
+    const rows = await this.db.select().from(webhookConfigs).orderBy(desc(webhookConfigs.updatedAt)).limit(limit);
+    return rows.map(mapWebhookConfig);
   }
 
   async upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet> {

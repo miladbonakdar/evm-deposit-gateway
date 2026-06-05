@@ -34,6 +34,7 @@ interface DepositAddressResponse {
 class MockChainProvider implements ChainProvider {
   tokenTransfers: Array<{ to: string; value: bigint }> = [];
   nativeTransfers: Array<{ to: string; value: bigint }> = [];
+  failTokenTransfer = false;
 
   async getLatestBlockNumber(): Promise<bigint> {
     return 100n;
@@ -63,6 +64,9 @@ class MockChainProvider implements ChainProvider {
     to: string,
     value: bigint
   ): Promise<string> {
+    if (this.failTokenTransfer) {
+      throw new Error("mock token transfer failed");
+    }
     this.tokenTransfers.push({ to, value });
     return `0x${"4".repeat(64)}`;
   }
@@ -293,6 +297,22 @@ describe("Hono API", () => {
     });
     const merchant = (await merchantResponse.json()) as MerchantResponse;
 
+    const dashboardApiKey = await app.request(`/dashboard/api/merchants/${merchant.id}/api-keys`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(dashboardApiKey.status).toBe(201);
+    const dashboardApiKeyBody = (await dashboardApiKey.json()) as ApiKeyResponse;
+    expect(dashboardApiKeyBody.apiSecret).toEqual(expect.any(String));
+
+    const dashboardWebhook = await app.request(`/dashboard/api/merchants/${merchant.id}/webhook`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/dashboard-webhook", secret: "dashboard-webhook-secret" })
+    });
+    expect(dashboardWebhook.status).toBe(200);
+
     const gasWallet = await app.request("/dashboard/api/wallets/gas", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -325,8 +345,79 @@ describe("Hono API", () => {
     const data = await app.request("/dashboard/api/data", {
       headers: { authorization: `Bearer ${token}` }
     });
-    const dataBody = (await data.json()) as { operationalWallets: unknown[]; walletTransactions: unknown[] };
+    const dataBody = (await data.json()) as {
+      apiKeys: unknown[];
+      webhookConfigs: unknown[];
+      operationalWallets: unknown[];
+      walletTransactions: unknown[];
+    };
+    expect(dataBody.apiKeys).toHaveLength(1);
+    expect(dataBody.webhookConfigs).toHaveLength(1);
     expect(dataBody.operationalWallets).toHaveLength(2);
     expect(dataBody.walletTransactions).toHaveLength(1);
+  });
+
+  it("does not serve SPA HTML for missing dashboard API routes", async () => {
+    const repo = new MemoryRepository();
+    const config = createTestConfig();
+    const app = createApp({ repo, config, chainProvider: new MockChainProvider() });
+    const token = await dashboardToken(app);
+    const response = await app.request("/dashboard/api/missing-route", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const body = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(404);
+    expect(body.error.code).toBe("not_found");
+  });
+
+  it("returns validation errors for invalid dashboard transfer amounts and failed sends", async () => {
+    const repo = new MemoryRepository();
+    const config = createTestConfig();
+    const chainProvider = new MockChainProvider();
+    const app = createApp({ repo, config, chainProvider });
+    const token = await dashboardToken(app);
+    const merchantResponse = await app.request("/dashboard/api/merchants", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Failure Merchant" })
+    });
+    const merchant = (await merchantResponse.json()) as MerchantResponse;
+    const treasuryWallet = await app.request("/dashboard/api/wallets/treasury", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ merchantId: merchant.id, network: "ethereum", token: "USDT" })
+    });
+    const treasuryBody = (await treasuryWallet.json()) as { operationalWallet: { id: string } };
+
+    const invalidAmount = await app.request("/dashboard/api/wallet-transactions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        sourceWalletId: treasuryBody.operationalWallet.id,
+        asset: "USDT",
+        toAddress: testTreasuryAddress,
+        amount: "1.1234567"
+      })
+    });
+    expect(invalidAmount.status).toBe(400);
+
+    chainProvider.failTokenTransfer = true;
+    const failedSend = await app.request("/dashboard/api/wallet-transactions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        sourceWalletId: treasuryBody.operationalWallet.id,
+        asset: "USDT",
+        toAddress: testTreasuryAddress,
+        amount: "1.1"
+      })
+    });
+    const failedBody = (await failedSend.json()) as { error: { code: string; details: { status: string } } };
+
+    expect(failedSend.status).toBe(422);
+    expect(failedBody.error.code).toBe("wallet_transaction_failed");
+    expect(failedBody.error.details.status).toBe("failed");
+    expect((await repo.listWalletTransactions(10))[0]?.status).toBe("failed");
   });
 });

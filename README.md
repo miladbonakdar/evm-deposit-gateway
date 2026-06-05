@@ -130,6 +130,8 @@ Dashboard capabilities:
 
 - View enabled networks, merchants, deposit addresses, deposits, gas top-ups, sweeps, webhook events, and dashboard wallet transactions.
 - Create merchants.
+- Create merchant API keys and copy the one-time API secret.
+- Configure merchant webhook URL, secret, and active status.
 - Generate encrypted platform gas wallets per network.
 - Generate encrypted merchant treasury wallets per network/token. This also configures the merchant treasury address used by automatic sweeps.
 - Register an externally managed treasury address without storing a private key.

@@ -133,6 +133,15 @@ export class MemoryRepository implements Repository {
     return clone(id ? (this.apiKeys.get(id) ?? null) : null);
   }
 
+  async listApiKeys(merchantId: string | undefined, limit: number): Promise<MerchantApiKey[]> {
+    return clone(
+      [...this.apiKeys.values()]
+        .filter((apiKey) => !merchantId || apiKey.merchantId === merchantId)
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .slice(0, limit)
+    );
+  }
+
   async updateApiKeyLastUsed(id: string, usedAt: Date): Promise<void> {
     const apiKey = this.apiKeys.get(id);
     if (apiKey) {
@@ -185,6 +194,14 @@ export class MemoryRepository implements Repository {
 
   async getWebhookConfig(merchantId: string): Promise<WebhookConfig | null> {
     return clone(this.webhookConfigs.get(merchantId) ?? null);
+  }
+
+  async listWebhookConfigs(limit: number): Promise<WebhookConfig[]> {
+    return clone(
+      [...this.webhookConfigs.values()]
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+        .slice(0, limit)
+    );
   }
 
   async upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet> {

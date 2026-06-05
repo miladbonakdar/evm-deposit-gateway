@@ -79,10 +79,10 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
 
   app.post("/dashboard/api/login", async (c) => {
     const body = await parseJson(c, dashboardLoginSchema);
-    if (
-      !constantTimeStringEqual(body.username, config.adminDashboardUsername) ||
-      !constantTimeStringEqual(body.password, config.adminDashboardPassword)
-    ) {
+    const usernameMatches = constantTimeStringEqual(body.username, config.adminDashboardUsername);
+    const passwordMatches = constantTimeStringEqual(body.password, config.adminDashboardPassword);
+
+    if (!usernameMatches || !passwordMatches) {
       return c.json({ error: { code: "invalid_login", message: "Invalid dashboard username or password" } }, 401);
     }
 
@@ -127,6 +127,16 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     );
   });
 
+  app.post("/dashboard/api/merchants/:merchantId/api-keys", async (c) => {
+    const result = await merchantService.createApiKey(c.req.param("merchantId"));
+    return c.json(result, 201);
+  });
+
+  app.put("/dashboard/api/merchants/:merchantId/webhook", async (c) => {
+    const body = await parseJson(c, configureWebhookSchema);
+    return c.json(await merchantService.configureWebhook(c.req.param("merchantId"), body.url, body.secret, body.active));
+  });
+
   app.post("/dashboard/api/wallets/gas", async (c) => {
     const body = await parseJson(c, generateGasWalletSchema);
     return c.json(await dashboardService.generateGasWallet(body), 201);
@@ -146,6 +156,8 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     const body = await parseJson(c, createWalletTransactionSchema);
     return c.json(await dashboardService.createWalletTransaction(body), 201);
   });
+
+  app.all("/dashboard/api/*", (c) => c.json({ error: { code: "not_found", message: "Dashboard API route not found" } }, 404));
 
   app.use("/admin/*", adminAuthMiddleware(config.adminApiKey));
 

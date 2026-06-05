@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TronWeb } from "tronweb";
 import { loadSupportedNetworks } from "../src/config/networks.js";
+import { createAdminSessionToken, verifyAdminSessionToken } from "../src/security/admin-session.js";
 import { createTestEncryptor, testTronTokenAddress } from "./helpers.js";
 import { parseTokenAmount, formatTokenAmount } from "../src/utils/amount.js";
 import { normalizeTronAddress } from "../src/utils/address.js";
@@ -35,6 +36,12 @@ describe("security utilities", () => {
       body: "{\"hello\":\"world\"}"
     }))).toBe(true);
     expect(timingSafeEqualHex(signature, "00")).toBe(false);
+  });
+
+  it("signs and verifies dashboard admin sessions", () => {
+    const token = createAdminSessionToken("admin", "test-dashboard-session-secret-123456", 60);
+    expect(verifyAdminSessionToken(token, "test-dashboard-session-secret-123456").sub).toBe("admin");
+    expect(() => verifyAdminSessionToken(token, "different-dashboard-session-secret")).toThrow();
   });
 
   it("formats and parses token base units", () => {
