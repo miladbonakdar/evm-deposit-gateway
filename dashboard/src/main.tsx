@@ -14,12 +14,28 @@ import {
   ShieldCheck,
   Wallet
 } from "lucide-react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import "./styles.css";
 
 type NetworkKind = "evm" | "tron";
 type TokenSymbol = "USDT" | "USDC";
 type WalletPurpose = "gas" | "treasury";
 type Status = "active" | "expired" | "detected" | "confirmed" | "late" | "submitted" | "failed" | "pending" | "sent";
+type HistoryResource = "depositAddresses" | "deposits" | "walletTransactions" | "gasTopUps" | "sweeps" | "webhooks";
 
 interface Merchant {
   id: string;
@@ -173,9 +189,26 @@ interface DashboardData {
 
 interface Overview {
   stats: Record<string, number>;
+  charts: {
+    depositTrend: Array<{ date: string; count: number; confirmedCount: number; amount: number }>;
+    depositStatus: Array<{ name: string; value: number }>;
+    tokenVolume: Array<{ asset: string; amount: number; count: number }>;
+    walletTransactionStatus: Array<{ name: string; value: number }>;
+    webhookStatus: Array<{ name: string; value: number }>;
+  };
   recentDeposits: Deposit[];
   recentWalletTransactions: WalletTransaction[];
   recentWebhooks: WebhookEvent[];
+}
+
+interface HistoryResponse<T extends Record<string, unknown>> {
+  resource: HistoryResource;
+  limit: number;
+  offset: number;
+  total: number;
+  nextOffset: number | null;
+  previousOffset: number | null;
+  items: T[];
 }
 
 type Tab = "overview" | "merchants" | "wallets" | "deposits" | "transfers" | "webhooks";
@@ -189,6 +222,7 @@ const tabs: Array<{ id: Tab; label: string; icon: React.ComponentType<{ size?: n
   { id: "transfers", label: "Transfers", icon: ArrowRightLeft },
   { id: "webhooks", label: "Webhooks", icon: BellRing }
 ];
+const chartColors = ["#2563eb", "#0f766e", "#f59e0b", "#dc2626", "#7c3aed", "#64748b"];
 
 function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? "");
@@ -208,7 +242,7 @@ function App() {
     try {
       const [overviewResponse, dataResponse] = await Promise.all([
         apiGet<Overview>("/dashboard/api/overview", currentToken),
-        apiGet<DashboardData>("/dashboard/api/data?limit=200", currentToken)
+        apiGet<DashboardData>("/dashboard/api/data?limit=1000", currentToken)
       ]);
       setOverview(overviewResponse);
       setData(dataResponse);
@@ -418,6 +452,41 @@ function OverviewPanel({ overview, data }: { overview: Overview; data: Dashboard
           </div>
         ))}
       </div>
+      <div className="chart-grid">
+        <Panel title="Deposit activity">
+          <div className="chart-box">
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={overview.charts.depositTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Legend />
+                <Area type="monotone" dataKey="count" name="Detected" stroke="#2563eb" fill="#bfdbfe" />
+                <Area type="monotone" dataKey="confirmedCount" name="Confirmed" stroke="#0f766e" fill="#99f6e4" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+        <Panel title="Confirmed token volume">
+          <div className="chart-box">
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={overview.charts.tokenVolume}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="asset" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Bar dataKey="amount" name="Amount" fill="#2563eb" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+      </div>
+      <div className="chart-grid three">
+        <PiePanel title="Deposit status" data={overview.charts.depositStatus} />
+        <PiePanel title="Wallet transaction status" data={overview.charts.walletTransactionStatus} />
+        <PiePanel title="Webhook status" data={overview.charts.webhookStatus} />
+      </div>
       <div className="split-grid">
         <Panel title="Recent deposits">
           <DepositsTable deposits={overview.recentDeposits} merchants={data.merchants} compact />
@@ -427,6 +496,26 @@ function OverviewPanel({ overview, data }: { overview: Overview; data: Dashboard
         </Panel>
       </div>
     </section>
+  );
+}
+
+function PiePanel({ title, data }: { title: string; data: Array<{ name: string; value: number }> }) {
+  return (
+    <Panel title={title}>
+      <div className="chart-box small">
+        <ResponsiveContainer width="100%" height={220}>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={2}>
+              {data.map((entry, index) => (
+                <Cell key={entry.name} fill={chartColors[index % chartColors.length]} />
+              ))}
+            </Pie>
+            <Tooltip />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    </Panel>
   );
 }
 
@@ -690,12 +779,35 @@ function RegisterTreasuryWalletForm({
 function DepositsPanel({ data }: { data: DashboardData }) {
   return (
     <section className="stack">
-      <Panel title="Deposit addresses">
-        <DepositAddressesTable addresses={data.depositAddresses} merchants={data.merchants} />
-      </Panel>
-      <Panel title="Deposits">
-        <DepositsTable deposits={data.deposits} merchants={data.merchants} />
-      </Panel>
+      <HistoryPanel
+        title="Deposit address history"
+        resource="depositAddresses"
+        merchants={data.merchants}
+        networks={data.networks}
+        statusOptions={["active", "expired"]}
+        columns={[
+          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
+          { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Address", render: (row) => <CopyText value={stringField(row, "address")} /> },
+          { header: "Expires", render: (row) => formatDate(stringField(row, "expiresAt")) }
+        ]}
+      />
+      <HistoryPanel
+        title="Deposit transaction history"
+        resource="deposits"
+        merchants={data.merchants}
+        networks={data.networks}
+        statusOptions={["detected", "confirmed", "late"]}
+        columns={[
+          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
+          { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
+          { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Tx", render: (row) => <CopyText value={stringField(row, "txHash")} /> },
+          { header: "Detected", render: (row) => formatDate(stringField(row, "detectedAt")) }
+        ]}
+      />
     </section>
   );
 }
@@ -714,17 +826,50 @@ function TransfersPanel({
       <Panel title="Create wallet transaction">
         <WalletTransactionForm data={data} token={token} mutate={mutate} />
       </Panel>
-      <Panel title="Wallet transactions">
-        <WalletTransactionsTable transactions={data.walletTransactions} wallets={data.operationalWallets} merchants={data.merchants} />
-      </Panel>
-      <div className="split-grid">
-        <Panel title="Gas top-ups">
-          <GasTopUpsTable topUps={data.gasTopUps} merchants={data.merchants} />
-        </Panel>
-        <Panel title="Sweeps">
-          <SweepsTable sweeps={data.sweeps} merchants={data.merchants} />
-        </Panel>
-      </div>
+      <HistoryPanel
+        title="Wallet transaction history"
+        resource="walletTransactions"
+        merchants={data.merchants}
+        networks={data.networks}
+        statusOptions={["submitted", "confirmed", "failed"]}
+        columns={[
+          { header: "Source", render: (row) => walletName(data.operationalWallets, data.merchants)(stringField(row, "sourceWalletId")) },
+          { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "asset")}` },
+          { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Tx / Error", render: (row) => stringField(row, "txHash") ? <CopyText value={stringField(row, "txHash")} /> : stringField(row, "failureReason") || "-" },
+          { header: "Created", render: (row) => formatDate(stringField(row, "createdAt")) }
+        ]}
+      />
+      <HistoryPanel
+        title="Gas top-up history"
+        resource="gasTopUps"
+        merchants={data.merchants}
+        networks={data.networks}
+        statusOptions={["submitted", "confirmed", "failed"]}
+        hideTokenFilter
+        columns={[
+          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
+          { header: "Network", render: (row) => stringField(row, "network") },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Tx / Error", render: (row) => stringField(row, "txHash") ? <CopyText value={stringField(row, "txHash")} /> : stringField(row, "failureReason") || "-" },
+          { header: "Created", render: (row) => formatDate(stringField(row, "createdAt")) }
+        ]}
+      />
+      <HistoryPanel
+        title="Sweep history"
+        resource="sweeps"
+        merchants={data.merchants}
+        networks={data.networks}
+        statusOptions={["submitted", "confirmed", "failed"]}
+        columns={[
+          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
+          { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
+          { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Tx / Error", render: (row) => stringField(row, "txHash") ? <CopyText value={stringField(row, "txHash")} /> : stringField(row, "failureReason") || "-" }
+        ]}
+      />
     </section>
   );
 }
@@ -790,24 +935,148 @@ function WalletTransactionForm({
 function WebhooksPanel({ data }: { data: DashboardData }) {
   return (
     <section className="stack">
-      <Panel title="Webhook events">
-        <table>
-          <thead><tr><th>Type</th><th>Merchant</th><th>Status</th><th>Attempts</th><th>Response</th><th>Created</th></tr></thead>
-          <tbody>
-            {data.webhooks.map((event) => (
-              <tr key={event.id}>
-                <td>{event.type}</td>
-                <td>{merchantName(data.merchants)(event.merchantId)}</td>
-                <td><StatusPill status={event.status} /></td>
-                <td>{event.attempts}</td>
-                <td>{event.responseStatus ?? event.lastError ?? "-"}</td>
-                <td>{formatDate(event.createdAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
+      <HistoryPanel
+        title="Webhook event history"
+        resource="webhooks"
+        merchants={data.merchants}
+        networks={data.networks}
+        statusOptions={["pending", "sent", "failed"]}
+        hideNetworkFilter
+        hideTokenFilter
+        columns={[
+          { header: "Type", render: (row) => stringField(row, "type") },
+          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Attempts", render: (row) => stringField(row, "attempts") },
+          { header: "Response", render: (row) => stringField(row, "responseStatus") || stringField(row, "lastError") || "-" },
+          { header: "Created", render: (row) => formatDate(stringField(row, "createdAt")) }
+        ]}
+      />
     </section>
+  );
+}
+
+interface HistoryColumn {
+  header: string;
+  render(row: Record<string, unknown>): React.ReactNode;
+}
+
+function HistoryPanel({
+  title,
+  resource,
+  merchants,
+  networks,
+  statusOptions,
+  columns,
+  hideNetworkFilter = false,
+  hideTokenFilter = false
+}: {
+  title: string;
+  resource: HistoryResource;
+  merchants: Merchant[];
+  networks: EnabledNetwork[];
+  statusOptions: string[];
+  columns: HistoryColumn[];
+  hideNetworkFilter?: boolean;
+  hideTokenFilter?: boolean;
+}) {
+  const token = sessionStorage.getItem(tokenStorageKey) ?? "";
+  const [status, setStatus] = useState("");
+  const [network, setNetwork] = useState("");
+  const [tokenFilter, setTokenFilter] = useState("");
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState("25");
+  const [offset, setOffset] = useState(0);
+  const [response, setResponse] = useState<HistoryResponse<Record<string, unknown>> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const tokenOptions = network ? tokensForNetwork(networks, network) : ["USDT", "USDC"];
+
+  async function load(nextOffset = offset) {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({
+        resource,
+        limit,
+        offset: String(nextOffset)
+      });
+      if (status) {
+        params.set("status", status);
+      }
+      if (network && !hideNetworkFilter) {
+        params.set("network", network);
+      }
+      if (tokenFilter && !hideTokenFilter) {
+        params.set("token", tokenFilter);
+      }
+      if (query) {
+        params.set("q", query);
+      }
+
+      const next = await apiGet<HistoryResponse<Record<string, unknown>>>(`/dashboard/api/history?${params}`, token);
+      setResponse(next);
+      setOffset(next.offset);
+    } catch (historyError) {
+      setError(errorMessage(historyError));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setOffset(0);
+    void load(0);
+  }, [resource, status, network, tokenFilter, limit]);
+
+  function submitSearch(event: FormEvent) {
+    event.preventDefault();
+    setOffset(0);
+    void load(0);
+  }
+
+  return (
+    <Panel title={title}>
+      <form className="history-toolbar" onSubmit={submitSearch}>
+        <label>
+          Search
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="hash, address, id, URL" />
+        </label>
+        <Select label="Status" value={status} onChange={setStatus} options={["", ...statusOptions]} render={(value) => value || "All"} />
+        {hideNetworkFilter ? null : (
+          <Select label="Network" value={network} onChange={setNetwork} options={["", ...networks.map((item) => item.network)]} render={(value) => value || "All"} />
+        )}
+        {hideTokenFilter ? null : (
+          <Select label="Token" value={tokenFilter} onChange={setTokenFilter} options={["", ...tokenOptions]} render={(value) => value || "All"} />
+        )}
+        <Select label="Rows" value={limit} onChange={setLimit} options={["10", "25", "50", "100"]} />
+        <button className="secondary" disabled={loading}><RefreshCw size={16} />Apply</button>
+      </form>
+      {error ? <div className="notice error">{error}</div> : null}
+      <table>
+        <thead>
+          <tr>{columns.map((column) => <th key={column.header}>{column.header}</th>)}</tr>
+        </thead>
+        <tbody>
+          {(response?.items ?? []).map((row) => (
+            <tr key={stringField(row, "id")}>
+              {columns.map((column) => <td key={column.header}>{column.render(row)}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="pager">
+        <span>{response ? `${response.total} records` : loading ? "Loading" : "No records"}</span>
+        <div>
+          <button className="secondary" disabled={response?.previousOffset === null || response?.previousOffset === undefined || loading} onClick={() => void load(response?.previousOffset ?? 0)}>
+            Previous
+          </button>
+          <button className="secondary" disabled={response?.nextOffset === null || response?.nextOffset === undefined || loading} onClick={() => void load(response?.nextOffset ?? 0)}>
+            Next
+          </button>
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -1050,6 +1319,14 @@ function CopyText({ value }: { value: string }) {
 
 function tokensForNetwork(networks: EnabledNetwork[], network: string): TokenSymbol[] {
   return networks.find((item) => item.network === network)?.tokens.map((token) => token.symbol) ?? [];
+}
+
+function stringField(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
 }
 
 function merchantName(merchants: Merchant[]) {

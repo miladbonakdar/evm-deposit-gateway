@@ -30,6 +30,7 @@ import {
   createDepositAddressSchema,
   createWalletTransactionSchema,
   dashboardListQuerySchema,
+  dashboardHistoryQuerySchema,
   dashboardLoginSchema,
   createMerchantSchema,
   generateGasWalletSchema,
@@ -110,6 +111,19 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   app.get("/dashboard/api/data", async (c) => {
     const query = dashboardListQuerySchema.parse({ limit: c.req.query("limit") });
     return c.json(await dashboardService.listDashboardData(query.limit));
+  });
+
+  app.get("/dashboard/api/history", async (c) => {
+    const query = dashboardHistoryQuerySchema.parse({
+      resource: c.req.query("resource"),
+      limit: c.req.query("limit"),
+      offset: c.req.query("offset"),
+      status: c.req.query("status"),
+      network: c.req.query("network"),
+      token: c.req.query("token"),
+      q: c.req.query("q")
+    });
+    return c.json(await dashboardService.getHistory(query));
   });
 
   app.post("/dashboard/api/merchants", async (c) => {

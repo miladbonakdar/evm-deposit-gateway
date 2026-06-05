@@ -47,6 +47,20 @@ interface CreateWalletTransactionInput {
   amount: string;
 }
 
+type DashboardHistoryResource = "depositAddresses" | "deposits" | "walletTransactions" | "gasTopUps" | "sweeps" | "webhooks";
+
+interface DashboardHistoryInput {
+  resource: DashboardHistoryResource;
+  limit: number;
+  offset: number;
+  status?: string;
+  network?: NetworkSlug;
+  token?: TokenSymbol;
+  q?: string;
+}
+
+const dashboardHistoryScanLimit = 5_000;
+
 export class DashboardService {
   constructor(
     private readonly repo: Repository,
@@ -76,6 +90,13 @@ export class DashboardService {
         pendingWebhooks: webhooks.filter((event) => event.status === "pending").length,
         operationalWallets: operationalWallets.length,
         submittedWalletTransactions: walletTransactions.filter((transaction) => transaction.status === "submitted").length
+      },
+      charts: {
+        depositTrend: buildDepositTrend(deposits),
+        depositStatus: countBy(deposits, (deposit) => deposit.status),
+        tokenVolume: buildTokenVolume(deposits),
+        walletTransactionStatus: countBy(walletTransactions, (transaction) => transaction.status),
+        webhookStatus: countBy(webhooks, (event) => event.status)
       },
       recentDeposits: deposits.slice(0, 12).map(publicTransferForDashboard),
       recentWalletTransactions: walletTransactions.slice(0, 12).map(publicWalletTransaction),
@@ -171,6 +192,22 @@ export class DashboardService {
       })),
       walletTransactions: walletTransactions.map(publicWalletTransaction),
       webhooks: webhooks.map(publicWebhookEvent)
+    };
+  }
+
+  async getHistory(input: DashboardHistoryInput) {
+    const rows = await this.loadHistoryRows(input.resource);
+    const filtered = rows.filter((row) => matchesHistoryFilter(row, input));
+    const items = filtered.slice(input.offset, input.offset + input.limit);
+
+    return {
+      resource: input.resource,
+      limit: input.limit,
+      offset: input.offset,
+      total: filtered.length,
+      nextOffset: input.offset + input.limit < filtered.length ? input.offset + input.limit : null,
+      previousOffset: input.offset > 0 ? Math.max(0, input.offset - input.limit) : null,
+      items
     };
   }
 
@@ -324,6 +361,33 @@ export class DashboardService {
     }
     return merchant;
   }
+
+  private async loadHistoryRows(resource: DashboardHistoryResource): Promise<Array<Record<string, unknown>>> {
+    switch (resource) {
+      case "depositAddresses":
+        return (await this.repo.listDepositAddresses({ limit: dashboardHistoryScanLimit })).map((address) => ({
+          id: address.id,
+          merchantId: address.merchantId,
+          network: address.network,
+          token: address.token,
+          address: address.address,
+          status: address.status,
+          externalId: address.externalId,
+          expiresAt: address.expiresAt.toISOString(),
+          createdAt: address.createdAt.toISOString()
+        }));
+      case "deposits":
+        return (await this.repo.listTokenTransfers({ limit: dashboardHistoryScanLimit })).map(publicTransferForDashboard);
+      case "walletTransactions":
+        return (await this.repo.listWalletTransactions(dashboardHistoryScanLimit)).map(publicWalletTransaction);
+      case "gasTopUps":
+        return (await this.repo.listGasTopUps(dashboardHistoryScanLimit)).map(publicGasTopUp);
+      case "sweeps":
+        return (await this.repo.listSweeps(dashboardHistoryScanLimit)).map(publicSweep);
+      case "webhooks":
+        return (await this.repo.listWebhookEvents(dashboardHistoryScanLimit)).map(publicWebhookEvent);
+    }
+  }
 }
 
 function nativeDecimals(kind: "evm" | "tron"): number {
@@ -444,6 +508,68 @@ function publicWalletTransaction(transaction: WalletTransaction) {
   };
 }
 
+function publicGasTopUp(topUp: {
+  id: string;
+  transferId: string;
+  merchantId: string;
+  depositAddressId: string;
+  network: NetworkSlug;
+  txHash: string | null;
+  amountWei: string;
+  status: string;
+  failureReason: string | null;
+  createdAt: Date;
+  confirmedAt: Date | null;
+}) {
+  return {
+    id: topUp.id,
+    transferId: topUp.transferId,
+    merchantId: topUp.merchantId,
+    depositAddressId: topUp.depositAddressId,
+    network: topUp.network,
+    txHash: topUp.txHash,
+    amountWei: topUp.amountWei,
+    status: topUp.status,
+    failureReason: topUp.failureReason,
+    createdAt: topUp.createdAt.toISOString(),
+    confirmedAt: topUp.confirmedAt?.toISOString() ?? null
+  };
+}
+
+function publicSweep(sweep: {
+  id: string;
+  transferId: string;
+  merchantId: string;
+  depositAddressId: string;
+  network: NetworkSlug;
+  token: TokenSymbol;
+  txHash: string | null;
+  amountRaw: string;
+  amountFormatted: string;
+  toAddress: string;
+  status: string;
+  failureReason: string | null;
+  createdAt: Date;
+  confirmedAt: Date | null;
+}) {
+  return {
+    id: sweep.id,
+    transferId: sweep.transferId,
+    merchantId: sweep.merchantId,
+    depositAddressId: sweep.depositAddressId,
+    network: sweep.network,
+    token: sweep.token,
+    txHash: sweep.txHash,
+    amountRaw: sweep.amountRaw,
+    amountFormatted: sweep.amountFormatted,
+    toAddress: sweep.toAddress,
+    status: sweep.status,
+    failureReason: sweep.failureReason,
+    createdAt: sweep.createdAt.toISOString(),
+    confirmedAt: sweep.confirmedAt?.toISOString() ?? null
+  };
+}
+
 function publicWebhookEvent(event: WebhookEvent) {
   return {
     id: event.id,
@@ -460,4 +586,81 @@ function publicWebhookEvent(event: WebhookEvent) {
     nextAttemptAt: event.nextAttemptAt.toISOString(),
     sentAt: event.sentAt?.toISOString() ?? null
   };
+}
+
+function matchesHistoryFilter(row: Record<string, unknown>, input: DashboardHistoryInput): boolean {
+  if (input.status && String(row.status ?? "") !== input.status) {
+    return false;
+  }
+
+  if (input.network && String(row.network ?? "") !== input.network) {
+    return false;
+  }
+
+  if (input.token && String(row.token ?? "") !== input.token) {
+    return false;
+  }
+
+  if (input.q) {
+    const needle = input.q.toLowerCase();
+    return Object.values(row).some((value) => typeof value === "string" && value.toLowerCase().includes(needle));
+  }
+
+  return true;
+}
+
+function buildDepositTrend(deposits: TokenTransfer[]) {
+  const buckets = new Map<string, { date: string; count: number; confirmedCount: number; amount: number }>();
+  const now = new Date();
+
+  for (let index = 13; index >= 0; index -= 1) {
+    const date = new Date(now);
+    date.setUTCDate(now.getUTCDate() - index);
+    const key = date.toISOString().slice(0, 10);
+    buckets.set(key, { date: key, count: 0, confirmedCount: 0, amount: 0 });
+  }
+
+  for (const deposit of deposits) {
+    const key = deposit.detectedAt.toISOString().slice(0, 10);
+    const bucket = buckets.get(key);
+    if (!bucket) {
+      continue;
+    }
+
+    bucket.count += 1;
+    if (deposit.status === "confirmed") {
+      bucket.confirmedCount += 1;
+    }
+    bucket.amount += Number.parseFloat(deposit.amountFormatted) || 0;
+  }
+
+  return [...buckets.values()];
+}
+
+function buildTokenVolume(deposits: TokenTransfer[]) {
+  const buckets = new Map<string, { asset: string; amount: number; count: number }>();
+
+  for (const deposit of deposits) {
+    if (deposit.status !== "confirmed") {
+      continue;
+    }
+    const key = `${deposit.network} ${deposit.token}`;
+    const bucket = buckets.get(key) ?? { asset: key, amount: 0, count: 0 };
+    bucket.amount += Number.parseFloat(deposit.amountFormatted) || 0;
+    bucket.count += 1;
+    buckets.set(key, bucket);
+  }
+
+  return [...buckets.values()].sort((left, right) => right.amount - left.amount).slice(0, 10);
+}
+
+function countBy<T>(items: T[], getKey: (item: T) => string) {
+  const counts = new Map<string, { name: string; value: number }>();
+  for (const item of items) {
+    const key = getKey(item);
+    const current = counts.get(key) ?? { name: key, value: 0 };
+    current.value += 1;
+    counts.set(key, current);
+  }
+  return [...counts.values()];
 }

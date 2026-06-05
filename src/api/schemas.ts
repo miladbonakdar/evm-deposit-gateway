@@ -23,7 +23,17 @@ export const dashboardLoginSchema = z.object({
 });
 
 export const dashboardListQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(250).default(100)
+  limit: z.coerce.number().int().min(1).max(1000).default(250)
+});
+
+export const dashboardHistoryQuerySchema = z.object({
+  resource: z.enum(["depositAddresses", "deposits", "walletTransactions", "gasTopUps", "sweeps", "webhooks"]),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+  status: z.string().trim().min(1).max(40).optional(),
+  network: networkSchema.optional(),
+  token: tokenSchema.optional(),
+  q: z.string().trim().min(1).max(160).optional()
 });
 
 export const generateGasWalletSchema = z.object({

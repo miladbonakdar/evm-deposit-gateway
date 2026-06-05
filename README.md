@@ -129,6 +129,8 @@ Login uses:
 Dashboard capabilities:
 
 - View enabled networks, merchants, deposit addresses, deposits, gas top-ups, sweeps, webhook events, and dashboard wallet transactions.
+- View charts for deposit activity, confirmed token volume, deposit status, wallet transaction status, and webhook status.
+- Browse paginated, filterable histories for deposits, deposit addresses, wallet transactions, gas top-ups, sweeps, and webhook events.
 - Create merchants.
 - Create merchant API keys and copy the one-time API secret.
 - Configure merchant webhook URL, secret, and active status.

@@ -219,6 +219,26 @@ button:disabled {
   gap: 16px;
 }
 
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.chart-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.chart-box {
+  width: 100%;
+  min-height: 260px;
+  padding: 12px;
+}
+
+.chart-box.small {
+  min-height: 220px;
+}
+
 .panel {
   min-width: 0;
   overflow: hidden;
@@ -233,7 +253,8 @@ button:disabled {
 }
 
 .inline-form,
-.form-grid {
+.form-grid,
+.history-toolbar {
   display: grid;
   gap: 12px;
   padding: 16px;
@@ -256,6 +277,12 @@ button:disabled {
 .transaction-form {
   grid-template-columns: minmax(260px, 1.3fr) 120px minmax(220px, 1fr) minmax(240px, 1fr) 120px 120px;
   align-items: end;
+}
+
+.history-toolbar {
+  grid-template-columns: minmax(220px, 1fr) 150px 150px 120px 100px 110px;
+  align-items: end;
+  border-bottom: 1px solid #eef2f7;
 }
 
 label {
@@ -360,6 +387,25 @@ td {
 
 tr:hover td {
   background: #f8fafc;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.pager div {
+  display: flex;
+  gap: 8px;
+}
+
+.pager .secondary {
+  min-height: 34px;
 }
 
 .amount {
@@ -495,13 +541,16 @@ tr:hover td {
   }
 
   .split-grid,
+  .chart-grid,
+  .chart-grid.three,
   .form-grid {
     grid-template-columns: 1fr;
   }
 
   .transaction-form,
   .inline-form,
-  .inline-form.wide {
+  .inline-form.wide,
+  .history-toolbar {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
 }
@@ -533,7 +582,8 @@ tr:hover td {
   .metric-grid,
   .transaction-form,
   .inline-form,
-  .inline-form.wide {
+  .inline-form.wide,
+  .history-toolbar {
     grid-template-columns: 1fr;
   }
 

@@ -355,6 +355,23 @@ describe("Hono API", () => {
     expect(dataBody.webhookConfigs).toHaveLength(1);
     expect(dataBody.operationalWallets).toHaveLength(2);
     expect(dataBody.walletTransactions).toHaveLength(1);
+
+    const overview = await app.request("/dashboard/api/overview", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const overviewBody = (await overview.json()) as { charts: { depositTrend: unknown[]; walletTransactionStatus: unknown[] } };
+    expect(overview.status).toBe(200);
+    expect(overviewBody.charts.depositTrend).toHaveLength(14);
+    expect(overviewBody.charts.walletTransactionStatus).toEqual([{ name: "submitted", value: 1 }]);
+
+    const history = await app.request("/dashboard/api/history?resource=walletTransactions&limit=1&offset=0&status=submitted&q=4444", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const historyBody = (await history.json()) as { total: number; items: unknown[]; nextOffset: number | null };
+    expect(history.status).toBe(200);
+    expect(historyBody.total).toBe(1);
+    expect(historyBody.items).toHaveLength(1);
+    expect(historyBody.nextOffset).toBeNull();
   });
 
   it("does not serve SPA HTML for missing dashboard API routes", async () => {
