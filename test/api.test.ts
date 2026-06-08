@@ -8,6 +8,7 @@ import {
   createTestConfig,
   createTestNetworks,
   signedHeaders,
+  testTokenAddress,
   testTreasuryAddress,
   testTronTokenAddress,
   testTronTreasuryAddress
@@ -22,6 +23,7 @@ interface ApiKeyResponse {
 interface DepositAddressResponse {
   id: string;
   address: string;
+  treasuryWalletId: string;
   callbackUrl: string;
   qr: {
     base64?: string;
@@ -157,7 +159,7 @@ async function setupTronApi() {
 }
 
 describe("Hono API", () => {
-  it("creates owner credentials, webhook config, treasury wallets, and deposit addresses", async () => {
+  it("creates owner credentials, treasury wallets, and deposit addresses", async () => {
     const { app, apiKey, repo } = await setupApi();
     const body = JSON.stringify({
       network: "ethereum",
@@ -187,6 +189,7 @@ describe("Hono API", () => {
     expect(response.status).toBe(201);
     const depositAddress = (await response.json()) as DepositAddressResponse;
     expect(depositAddress.address).toMatch(/^0x[a-f0-9]{40}$/);
+    expect(depositAddress.treasuryWalletId).toEqual(expect.any(String));
     expect(depositAddress.callbackUrl).toBe("https://example.com/invoice-1-callback");
     expect(depositAddress.qr.base64).toEqual(expect.any(String));
     expect(depositAddress.privateKey).toBeUndefined();
@@ -195,9 +198,31 @@ describe("Hono API", () => {
       expect.objectContaining({
         type: "wallet.created",
         url: "https://example.com/invoice-1-callback",
-        depositAddressId: depositAddress.id
+        depositAddressId: depositAddress.id,
+        payload: expect.objectContaining({
+          data: expect.objectContaining({
+            treasuryWallet: testTreasuryAddress,
+            treasuryWalletId: depositAddress.treasuryWalletId
+          })
+        })
       })
     );
+
+    const treasuryList = await app.request("/v1/treasury-wallets?network=ethereum&token=USDT", {
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "GET",
+        path: "/v1/treasury-wallets?network=ethereum&token=USDT"
+      })
+    });
+    const treasuryBody = (await treasuryList.json()) as {
+      treasuryWallets: Array<{ id: string; isDefault: boolean; address: string }>;
+    };
+    expect(treasuryList.status).toBe(200);
+    expect(treasuryBody.treasuryWallets).toEqual([
+      expect.objectContaining({ id: depositAddress.treasuryWalletId, isDefault: true, address: testTreasuryAddress })
+    ]);
 
     const replay = await app.request("/v1/deposit-addresses", {
       method: "POST",
@@ -217,6 +242,155 @@ describe("Hono API", () => {
 
     expect(replay.status).toBe(201);
     expect(replayBody.id).toBe(depositAddress.id);
+  });
+
+  it("lets merchants list treasuries and choose a non-default treasury for a deposit", async () => {
+    const { app, apiKey, repo } = await setupApi();
+    const altTreasuryAddress = "0x0000000000000000000000000000000000000abd";
+
+    const firstList = await app.request("/v1/treasury-wallets?network=ethereum&token=USDT", {
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "GET",
+        path: "/v1/treasury-wallets?network=ethereum&token=USDT"
+      })
+    });
+    const firstListBody = (await firstList.json()) as {
+      treasuryWallets: Array<{ id: string; address: string; isDefault: boolean }>;
+    };
+    const firstTreasury = firstListBody.treasuryWallets[0];
+    if (!firstTreasury) {
+      throw new Error("Expected initial treasury wallet");
+    }
+    expect(firstTreasury).toEqual(expect.objectContaining({ address: testTreasuryAddress, isDefault: true }));
+
+    await app.request("/admin/treasury-wallets", {
+      method: "PUT",
+      headers: adminHeaders(),
+      body: JSON.stringify({ network: "ethereum", token: "USDT", address: altTreasuryAddress })
+    });
+
+    const secondList = await app.request("/v1/treasury-wallets?network=ethereum&token=USDT", {
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "GET",
+        path: "/v1/treasury-wallets?network=ethereum&token=USDT"
+      })
+    });
+    const secondListBody = (await secondList.json()) as {
+      treasuryWallets: Array<{ id: string; address: string; isDefault: boolean }>;
+    };
+    expect(secondListBody.treasuryWallets).toHaveLength(2);
+    expect(secondListBody.treasuryWallets[0]).toEqual(expect.objectContaining({
+      address: altTreasuryAddress,
+      isDefault: true
+    }));
+
+    const body = JSON.stringify({
+      network: "ethereum",
+      token: "USDT",
+      treasuryWalletId: firstTreasury.id,
+      callbackUrl: "https://example.com/non-default-callback",
+      callbackSecret: "non-default-callback-secret"
+    });
+    const response = await app.request("/v1/deposit-addresses", {
+      method: "POST",
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "POST",
+        path: "/v1/deposit-addresses",
+        body
+      }),
+      body
+    });
+    const depositAddress = (await response.json()) as DepositAddressResponse;
+    expect(response.status).toBe(201);
+    expect(depositAddress.treasuryWalletId).toBe(firstTreasury.id);
+
+    const callbacks = await repo.listDueWebhookEvents(new Date(), 10);
+    expect(callbacks.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "wallet.created",
+        payload: expect.objectContaining({
+          data: expect.objectContaining({
+            treasuryWallet: testTreasuryAddress,
+            treasuryWalletId: firstTreasury.id
+          })
+        })
+      })
+    );
+  });
+
+  it("rejects treasury IDs that do not match the requested asset", async () => {
+    const repo = new MemoryRepository();
+    const networks = createTestNetworks({
+      tokens: {
+        USDT: {
+          symbol: "USDT",
+          contractAddress: testTokenAddress,
+          decimals: 6
+        },
+        USDC: {
+          symbol: "USDC",
+          contractAddress: "0x0000000000000000000000000000000000000002",
+          decimals: 6
+        }
+      }
+    });
+    const config = createTestConfig({ networks });
+    const app = createApp({ repo, config });
+
+    const apiKeyResponse = await app.request("/admin/api-keys", {
+      method: "POST",
+      headers: adminHeaders()
+    });
+    const apiKey = (await apiKeyResponse.json()) as ApiKeyResponse;
+
+    await app.request("/admin/treasury-wallets", {
+      method: "PUT",
+      headers: adminHeaders(),
+      body: JSON.stringify({ network: "ethereum", token: "USDT", address: testTreasuryAddress })
+    });
+
+    const treasuryList = await app.request("/v1/treasury-wallets?network=ethereum&token=USDT", {
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "GET",
+        path: "/v1/treasury-wallets?network=ethereum&token=USDT"
+      })
+    });
+    const treasuryBody = (await treasuryList.json()) as { treasuryWallets: Array<{ id: string }> };
+    const treasury = treasuryBody.treasuryWallets[0];
+    if (!treasury) {
+      throw new Error("Expected treasury wallet");
+    }
+
+    const body = JSON.stringify({
+      network: "ethereum",
+      token: "USDC",
+      treasuryWalletId: treasury.id,
+      callbackUrl: "https://example.com/mismatch-callback",
+      callbackSecret: "mismatch-callback-secret"
+    });
+    const response = await app.request("/v1/deposit-addresses", {
+      method: "POST",
+      headers: signedHeaders({
+        apiKey: apiKey.apiKey,
+        apiSecret: apiKey.apiSecret,
+        method: "POST",
+        path: "/v1/deposit-addresses",
+        body
+      }),
+      body
+    });
+    const result = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(422);
+    expect(result.error.code).toBe("treasury_wallet_mismatch");
   });
 
   it("rejects reused nonces and unsupported assets", async () => {
@@ -311,12 +485,15 @@ describe("Hono API", () => {
     const dashboardApiKeyBody = (await dashboardApiKey.json()) as ApiKeyResponse;
     expect(dashboardApiKeyBody.apiSecret).toEqual(expect.any(String));
 
-    const dashboardWebhook = await app.request("/dashboard/api/webhook", {
+    const notificationPreferences = await app.request("/dashboard/api/notification-preferences", {
       method: "PUT",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ url: "https://example.com/dashboard-webhook", secret: "dashboard-webhook-secret" })
+      body: JSON.stringify({ enabledEvents: ["wallet.created", "deposit.confirmed"] })
     });
-    expect(dashboardWebhook.status).toBe(200);
+    expect(notificationPreferences.status).toBe(200);
+    expect(await notificationPreferences.json()).toEqual(expect.objectContaining({
+      enabledEvents: ["wallet.created", "deposit.confirmed"]
+    }));
 
     const gasWallet = await app.request("/dashboard/api/wallets/gas", {
       method: "POST",
@@ -333,6 +510,32 @@ describe("Hono API", () => {
     expect(treasuryWallet.status).toBe(201);
     const treasuryBody = (await treasuryWallet.json()) as { operationalWallet: { id: string; privateKey?: string } };
     expect(treasuryBody.operationalWallet.privateKey).toBeUndefined();
+
+    const registeredTreasury = await app.request("/dashboard/api/treasury-wallets", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        network: "ethereum",
+        token: "USDT",
+        address: "0x0000000000000000000000000000000000000abe",
+        label: "External settlement treasury"
+      })
+    });
+    expect(registeredTreasury.status).toBe(200);
+    const registeredTreasuryBody = (await registeredTreasury.json()) as { id: string; isDefault: boolean; label: string };
+    expect(registeredTreasuryBody.isDefault).toBe(false);
+
+    const defaultTreasury = await app.request(`/dashboard/api/treasury-wallets/${registeredTreasuryBody.id}/default`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(defaultTreasury.status).toBe(200);
+    expect(await defaultTreasury.json()).toEqual(expect.objectContaining({
+      id: registeredTreasuryBody.id,
+      isDefault: true,
+      label: "External settlement treasury"
+    }));
 
     const transfer = await app.request("/dashboard/api/wallet-transactions", {
       method: "POST",
@@ -352,12 +555,14 @@ describe("Hono API", () => {
     });
     const dataBody = (await data.json()) as {
       apiKeys: unknown[];
-      webhookConfigs: unknown[];
+      notificationPreferences: { enabledEvents: unknown[] };
+      treasuryWallets: unknown[];
       operationalWallets: unknown[];
       walletTransactions: unknown[];
     };
     expect(dataBody.apiKeys).toHaveLength(1);
-    expect(dataBody.webhookConfigs).toHaveLength(1);
+    expect(dataBody.notificationPreferences.enabledEvents).toEqual(["wallet.created", "deposit.confirmed"]);
+    expect(dataBody.treasuryWallets).toHaveLength(2);
     expect(dataBody.operationalWallets).toHaveLength(2);
     expect(dataBody.walletTransactions).toHaveLength(1);
 

@@ -51,6 +51,9 @@ export function createTestNetworks(overrides: Partial<SupportedNetworks["ethereu
     arbitrumSepolia: undefined,
     optimismSepolia: undefined,
     baseSepolia: undefined,
+    avalancheFuji: undefined,
+    lineaSepolia: undefined,
+    scrollSepolia: undefined,
     tron: undefined,
     nile: undefined
   };

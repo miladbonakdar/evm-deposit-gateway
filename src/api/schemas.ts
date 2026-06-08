@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { networkSchema, tokenSchema } from "../config/networks.js";
+import { webhookEventTypes } from "../types/domain.js";
 
 export const configureWebhookSchema = z.object({
   url: z.string().url(),
   secret: z.string().min(16).max(256).optional(),
   active: z.boolean().default(true)
+});
+
+export const notificationPreferencesSchema = z.object({
+  enabledEvents: z.array(z.enum(webhookEventTypes)).max(webhookEventTypes.length)
 });
 
 export const configureTreasuryWalletSchema = z.object({
@@ -48,7 +53,8 @@ export const registerTreasuryWalletSchema = z.object({
   merchantId: z.string().uuid().optional(),
   network: networkSchema,
   token: tokenSchema,
-  address: z.string().min(1)
+  address: z.string().min(1),
+  label: z.string().trim().min(1).max(120).optional()
 });
 
 export const createWalletTransactionSchema = z.object({
@@ -61,6 +67,7 @@ export const createWalletTransactionSchema = z.object({
 export const createDepositAddressSchema = z.object({
   network: networkSchema,
   token: tokenSchema,
+  treasuryWalletId: z.string().uuid().optional(),
   callbackUrl: z.string().url(),
   callbackSecret: z.string().min(16).max(256),
   ttlSeconds: z.number().int().min(60).max(2_592_000).optional(),
@@ -71,5 +78,11 @@ export const createDepositAddressSchema = z.object({
 
 export const listDepositsQuerySchema = z.object({
   status: z.enum(["detected", "confirmed", "late"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
+
+export const listTreasuryWalletsQuerySchema = z.object({
+  network: networkSchema.optional(),
+  token: tokenSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50)
 });

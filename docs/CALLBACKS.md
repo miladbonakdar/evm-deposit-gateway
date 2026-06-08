@@ -19,7 +19,7 @@ Your application creates the callback route with `POST /v1/deposit-addresses`:
 }
 ```
 
-`callbackSecret` is stored encrypted and is never returned. All lifecycle events for this deposit address use this callback URL and secret. The owner webhook configuration remains a fallback for old deposit rows or events that are not tied to a deposit address.
+`callbackSecret` is stored encrypted and is never returned. All lifecycle events for this deposit address use this callback URL and secret. The dashboard notification settings can enable or disable specific lifecycle event types globally.
 
 Headers:
 
@@ -94,6 +94,9 @@ type NetworkSlug =
   | "arbitrumSepolia"
   | "optimismSepolia"
   | "baseSepolia"
+  | "avalancheFuji"
+  | "lineaSepolia"
+  | "scrollSepolia"
   | "tron"
   | "nile";
 
@@ -108,6 +111,7 @@ interface DepositAddressPayload {
   network: NetworkSlug;
   token: TokenSymbol;
   address: string;
+  treasuryWalletId: string | null;
   callbackUrl: string | null;
   status: DepositAddressStatus;
   expiresAt: string;
@@ -141,6 +145,7 @@ interface GasTopUpPayload {
   network: NetworkSlug;
   txHash: string | null;
   amountWei: string;
+  attemptNumber: number;
   status: TransactionStatus;
   failureReason: string | null;
   createdAt: string;
@@ -156,6 +161,7 @@ interface SweepPayload {
   amountRaw: string;
   amountFormatted: string;
   toAddress: string;
+  attemptNumber: number;
   status: TransactionStatus;
   failureReason: string | null;
   createdAt: string;
@@ -173,6 +179,7 @@ Sent after the API creates and encrypts a temporary deposit wallet.
 interface WalletCreatedData {
   depositAddress: DepositAddressPayload;
   treasuryWallet: string;
+  treasuryWalletId: string;
 }
 ```
 
@@ -250,6 +257,8 @@ interface GasTopUpFailedData {
 }
 ```
 
+The related deposit settlement remains pending. After the gas source is funded or configured, an operator can use dashboard **Retry Settlement** to create a new gas top-up attempt.
+
 ### sweep.submitted
 
 Sent after the worker submits the ERC-20 sweep transaction from temporary wallet to treasury wallet.
@@ -279,6 +288,8 @@ interface SweepFailedData {
   sweep: SweepPayload;
 }
 ```
+
+The related deposit settlement remains pending. After the sweep issue is resolved, dashboard **Retry Settlement** creates a new sweep attempt.
 
 ## Transaction Lifecycle
 

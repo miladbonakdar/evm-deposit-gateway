@@ -6,6 +6,7 @@ import {
   idempotencyKeys,
   merchantApiKeys,
   merchants,
+  notificationPreferences,
   operationalWallets,
   requestNonces,
   sweeps,
@@ -26,6 +27,7 @@ import type {
   Merchant,
   MerchantApiKey,
   NetworkSlug,
+  NotificationPreferences,
   OperationalWallet,
   Sweep,
   TokenSymbol,
@@ -50,8 +52,11 @@ import type {
   ListDepositAddressesFilter,
   ListDepositsFilter,
   ListOperationalWalletsFilter,
+  ListTreasuryWalletsFilter,
   ListTransfersFilter,
   Repository,
+  UpdateTransferSettlementInput,
+  UpsertNotificationPreferencesInput,
   UpsertOperationalWalletInput,
   UpsertTreasuryWalletInput,
   UpsertWebhookConfigInput
@@ -73,8 +78,25 @@ function mapWebhookConfig(row: typeof webhookConfigs.$inferSelect): WebhookConfi
   return row as WebhookConfig;
 }
 
+function mapNotificationPreferences(row: typeof notificationPreferences.$inferSelect): NotificationPreferences {
+  return {
+    merchantId: row.merchantId,
+    enabledEvents: Array.isArray(row.enabledEvents)
+      ? (row.enabledEvents as NotificationPreferences["enabledEvents"])
+      : [],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function mapTreasuryWallet(row: typeof treasuryWallets.$inferSelect): TreasuryWallet {
-  return { ...row, network: row.network as NetworkSlug, token: row.token as TokenSymbol, address: row.address };
+  return {
+    ...row,
+    network: row.network as NetworkSlug,
+    token: row.token as TokenSymbol,
+    address: row.address,
+    operationalWalletId: row.operationalWalletId
+  };
 }
 
 function mapOperationalWallet(row: typeof operationalWallets.$inferSelect): OperationalWallet {
@@ -94,6 +116,7 @@ function mapDepositAddress(row: typeof depositAddresses.$inferSelect): DepositAd
     network: row.network as NetworkSlug,
     token: row.token as TokenSymbol,
     address: row.address,
+    treasuryWalletId: row.treasuryWalletId,
     callbackUrl: row.callbackUrl,
     callbackSecretEncrypted: row.callbackSecretEncrypted,
     status: row.status as DepositAddress["status"]
@@ -113,7 +136,10 @@ function mapTransfer(row: typeof tokenTransfers.$inferSelect): TokenTransfer {
     fromAddress: row.fromAddress,
     toAddress: row.toAddress,
     blockHash: row.blockHash,
-    status: row.status as TokenTransfer["status"]
+    status: row.status as TokenTransfer["status"],
+    settlementStatus: row.settlementStatus as TokenTransfer["settlementStatus"],
+    settlementStep: row.settlementStep as TokenTransfer["settlementStep"],
+    settlementFailureReason: row.settlementFailureReason
   };
 }
 
@@ -257,36 +283,184 @@ export class PostgresRepository implements Repository {
     return rows.map(mapWebhookConfig);
   }
 
-  async upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet> {
+  async upsertNotificationPreferences(
+    input: UpsertNotificationPreferencesInput
+  ): Promise<NotificationPreferences> {
+    const enabledEvents = [...new Set(input.enabledEvents)];
     const rows = await this.db
-      .insert(treasuryWallets)
-      .values(input)
+      .insert(notificationPreferences)
+      .values({ merchantId: input.merchantId, enabledEvents })
       .onConflictDoUpdate({
-        target: [treasuryWallets.merchantId, treasuryWallets.network, treasuryWallets.token],
-        set: { address: input.address, updatedAt: new Date() }
+        target: notificationPreferences.merchantId,
+        set: { enabledEvents, updatedAt: new Date() }
       })
       .returning();
-    return mapTreasuryWallet(rows[0] as typeof treasuryWallets.$inferSelect);
+    return mapNotificationPreferences(rows[0] as typeof notificationPreferences.$inferSelect);
+  }
+
+  async getNotificationPreferences(merchantId: string): Promise<NotificationPreferences | null> {
+    const rows = await this.db
+      .select()
+      .from(notificationPreferences)
+      .where(eq(notificationPreferences.merchantId, merchantId))
+      .limit(1);
+    const row = first(rows);
+    return row ? mapNotificationPreferences(row) : null;
+  }
+
+  async upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet> {
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const existingRows = await tx
+        .select()
+        .from(treasuryWallets)
+        .where(
+          and(
+            eq(treasuryWallets.merchantId, input.merchantId),
+            eq(treasuryWallets.network, input.network),
+            eq(treasuryWallets.token, input.token),
+            eq(treasuryWallets.address, input.address)
+          )
+        )
+        .limit(1);
+      const existing = first(existingRows);
+      const defaultRows = await tx
+        .select()
+        .from(treasuryWallets)
+        .where(
+          and(
+            eq(treasuryWallets.merchantId, input.merchantId),
+            eq(treasuryWallets.network, input.network),
+            eq(treasuryWallets.token, input.token),
+            eq(treasuryWallets.isDefault, true)
+          )
+        )
+        .limit(1);
+      const shouldBeDefault = input.isDefault === true || defaultRows.length === 0;
+
+      if (shouldBeDefault) {
+        await tx
+          .update(treasuryWallets)
+          .set({ isDefault: false, updatedAt: now })
+          .where(
+            and(
+              eq(treasuryWallets.merchantId, input.merchantId),
+              eq(treasuryWallets.network, input.network),
+              eq(treasuryWallets.token, input.token)
+            )
+          );
+      }
+
+      if (existing) {
+        const rows = await tx
+          .update(treasuryWallets)
+          .set({
+            label: input.label,
+            operationalWalletId: input.operationalWalletId ?? existing.operationalWalletId,
+            isDefault: shouldBeDefault ? true : existing.isDefault,
+            updatedAt: now
+          })
+          .where(eq(treasuryWallets.id, existing.id))
+          .returning();
+        return mapTreasuryWallet(rows[0] as typeof treasuryWallets.$inferSelect);
+      }
+
+      const rows = await tx
+        .insert(treasuryWallets)
+        .values({
+          ...input,
+          isDefault: shouldBeDefault,
+          operationalWalletId: input.operationalWalletId ?? null
+        })
+        .returning();
+      return mapTreasuryWallet(rows[0] as typeof treasuryWallets.$inferSelect);
+    });
   }
 
   async getTreasuryWallet(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<TreasuryWallet | null> {
     const rows = await this.db
       .select()
       .from(treasuryWallets)
+      .where(
+        and(
+          eq(treasuryWallets.merchantId, merchantId),
+          eq(treasuryWallets.network, network),
+          eq(treasuryWallets.token, token),
+          eq(treasuryWallets.isDefault, true)
+        )
+      )
+      .limit(1);
+    const row = first(rows);
+    if (row) {
+      return mapTreasuryWallet(row);
+    }
+
+    const fallbackRows = await this.db
+      .select()
+      .from(treasuryWallets)
       .where(and(eq(treasuryWallets.merchantId, merchantId), eq(treasuryWallets.network, network), eq(treasuryWallets.token, token)))
+      .orderBy(desc(treasuryWallets.updatedAt))
+      .limit(1);
+    const fallback = first(fallbackRows);
+    return fallback ? mapTreasuryWallet(fallback) : null;
+  }
+
+  async getTreasuryWalletById(merchantId: string, id: string): Promise<TreasuryWallet | null> {
+    const rows = await this.db
+      .select()
+      .from(treasuryWallets)
+      .where(and(eq(treasuryWallets.merchantId, merchantId), eq(treasuryWallets.id, id)))
       .limit(1);
     const row = first(rows);
     return row ? mapTreasuryWallet(row) : null;
   }
 
-  async listTreasuryWallets(merchantId: string | undefined, limit: number): Promise<TreasuryWallet[]> {
+  async listTreasuryWallets(filter: ListTreasuryWalletsFilter): Promise<TreasuryWallet[]> {
+    const conditions = [
+      filter.merchantId ? eq(treasuryWallets.merchantId, filter.merchantId) : undefined,
+      filter.network ? eq(treasuryWallets.network, filter.network) : undefined,
+      filter.token ? eq(treasuryWallets.token, filter.token) : undefined
+    ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
     const rows = await this.db
       .select()
       .from(treasuryWallets)
-      .where(merchantId ? eq(treasuryWallets.merchantId, merchantId) : undefined)
-      .orderBy(desc(treasuryWallets.updatedAt))
-      .limit(limit);
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(treasuryWallets.isDefault), desc(treasuryWallets.updatedAt))
+      .limit(filter.limit);
     return rows.map(mapTreasuryWallet);
+  }
+
+  async setDefaultTreasuryWallet(merchantId: string, id: string): Promise<TreasuryWallet | null> {
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(treasuryWallets)
+        .where(and(eq(treasuryWallets.merchantId, merchantId), eq(treasuryWallets.id, id)))
+        .limit(1);
+      const wallet = first(rows);
+      if (!wallet) {
+        return null;
+      }
+
+      const now = new Date();
+      await tx
+        .update(treasuryWallets)
+        .set({ isDefault: false, updatedAt: now })
+        .where(
+          and(
+            eq(treasuryWallets.merchantId, wallet.merchantId),
+            eq(treasuryWallets.network, wallet.network),
+            eq(treasuryWallets.token, wallet.token)
+          )
+        );
+
+      const updated = await tx
+        .update(treasuryWallets)
+        .set({ isDefault: true, updatedAt: now })
+        .where(eq(treasuryWallets.id, wallet.id))
+        .returning();
+      return mapTreasuryWallet(updated[0] as typeof treasuryWallets.$inferSelect);
+    });
   }
 
   async upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet> {
@@ -525,25 +699,41 @@ export class PostgresRepository implements Repository {
     return row ? mapTransfer(row) : null;
   }
 
-  async getGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null> {
-    const rows = await this.db.select().from(gasTopUps).where(eq(gasTopUps.transferId, transferId)).limit(1);
+  async updateTransferSettlement(
+    id: string,
+    input: UpdateTransferSettlementInput
+  ): Promise<TokenTransfer | null> {
+    const rows = await this.db
+      .update(tokenTransfers)
+      .set({
+        settlementStatus: input.settlementStatus,
+        settlementStep: input.settlementStep ?? null,
+        settlementFailureReason: input.settlementFailureReason ?? null,
+        settlementUpdatedAt: new Date()
+      })
+      .where(eq(tokenTransfers.id, id))
+      .returning();
+    const row = first(rows);
+    return row ? mapTransfer(row) : null;
+  }
+
+  async getLatestGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null> {
+    const rows = await this.db
+      .select()
+      .from(gasTopUps)
+      .where(eq(gasTopUps.transferId, transferId))
+      .orderBy(desc(gasTopUps.attemptNumber))
+      .limit(1);
     const row = first(rows);
     return row ? mapGasTopUp(row) : null;
   }
 
-  async createGasTopUpIfNotExists(input: CreateGasTopUpInput): Promise<{ gasTopUp: GasTopUp; created: boolean }> {
+  async createGasTopUp(input: CreateGasTopUpInput): Promise<GasTopUp> {
     const rows = await this.db
       .insert(gasTopUps)
       .values({ ...input, failureReason: input.failureReason ?? null })
-      .onConflictDoNothing()
       .returning();
-    const inserted = first(rows);
-    if (inserted) {
-      return { gasTopUp: mapGasTopUp(inserted), created: true };
-    }
-
-    const existing = await this.db.select().from(gasTopUps).where(eq(gasTopUps.transferId, input.transferId)).limit(1);
-    return { gasTopUp: mapGasTopUp(existing[0] as typeof gasTopUps.$inferSelect), created: false };
+    return mapGasTopUp(rows[0] as typeof gasTopUps.$inferSelect);
   }
 
   async listSubmittedGasTopUps(limit: number): Promise<GasTopUp[]> {
@@ -557,7 +747,7 @@ export class PostgresRepository implements Repository {
   }
 
   async listGasTopUps(limit: number): Promise<GasTopUp[]> {
-    const rows = await this.db.select().from(gasTopUps).orderBy(desc(gasTopUps.createdAt)).limit(limit);
+    const rows = await this.db.select().from(gasTopUps).orderBy(desc(gasTopUps.createdAt), desc(gasTopUps.attemptNumber)).limit(limit);
     return rows.map(mapGasTopUp);
   }
 
@@ -581,25 +771,23 @@ export class PostgresRepository implements Repository {
     return row ? mapGasTopUp(row) : null;
   }
 
-  async getSweepByTransfer(transferId: string): Promise<Sweep | null> {
-    const rows = await this.db.select().from(sweeps).where(eq(sweeps.transferId, transferId)).limit(1);
+  async getLatestSweepByTransfer(transferId: string): Promise<Sweep | null> {
+    const rows = await this.db
+      .select()
+      .from(sweeps)
+      .where(eq(sweeps.transferId, transferId))
+      .orderBy(desc(sweeps.attemptNumber))
+      .limit(1);
     const row = first(rows);
     return row ? mapSweep(row) : null;
   }
 
-  async createSweepIfNotExists(input: CreateSweepInput): Promise<{ sweep: Sweep; created: boolean }> {
+  async createSweep(input: CreateSweepInput): Promise<Sweep> {
     const rows = await this.db
       .insert(sweeps)
       .values({ ...input, failureReason: input.failureReason ?? null })
-      .onConflictDoNothing()
       .returning();
-    const inserted = first(rows);
-    if (inserted) {
-      return { sweep: mapSweep(inserted), created: true };
-    }
-
-    const existing = await this.db.select().from(sweeps).where(eq(sweeps.transferId, input.transferId)).limit(1);
-    return { sweep: mapSweep(existing[0] as typeof sweeps.$inferSelect), created: false };
+    return mapSweep(rows[0] as typeof sweeps.$inferSelect);
   }
 
   async listSubmittedSweeps(limit: number): Promise<Sweep[]> {
@@ -613,7 +801,7 @@ export class PostgresRepository implements Repository {
   }
 
   async listSweeps(limit: number): Promise<Sweep[]> {
-    const rows = await this.db.select().from(sweeps).orderBy(desc(sweeps.createdAt)).limit(limit);
+    const rows = await this.db.select().from(sweeps).orderBy(desc(sweeps.createdAt), desc(sweeps.attemptNumber)).limit(limit);
     return rows.map(mapSweep);
   }
 

@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   uuid
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const merchants = pgTable("merchants", {
   id: uuid("id").primaryKey(),
@@ -65,27 +66,14 @@ export const webhookConfigs = pgTable("webhook_configs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
 
-export const treasuryWallets = pgTable(
-  "treasury_wallets",
-  {
-    id: uuid("id").primaryKey(),
-    merchantId: uuid("merchant_id")
-      .notNull()
-      .references(() => merchants.id, { onDelete: "cascade" }),
-    network: text("network").notNull(),
-    token: text("token").notNull(),
-    address: text("address").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
-  },
-  (table) => ({
-    merchantAssetUnique: uniqueIndex("treasury_wallets_merchant_asset_unique").on(
-      table.merchantId,
-      table.network,
-      table.token
-    )
-  })
-);
+export const notificationPreferences = pgTable("notification_preferences", {
+  merchantId: uuid("merchant_id")
+    .primaryKey()
+    .references(() => merchants.id, { onDelete: "cascade" }),
+  enabledEvents: jsonb("enabled_events").notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
 
 export const operationalWallets = pgTable(
   "operational_wallets",
@@ -110,6 +98,37 @@ export const operationalWallets = pgTable(
   })
 );
 
+export const treasuryWallets = pgTable(
+  "treasury_wallets",
+  {
+    id: uuid("id").primaryKey(),
+    merchantId: uuid("merchant_id")
+      .notNull()
+      .references(() => merchants.id, { onDelete: "cascade" }),
+    network: text("network").notNull(),
+    token: text("token").notNull(),
+    address: text("address").notNull(),
+    label: text("label").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    operationalWalletId: uuid("operational_wallet_id").references(() => operationalWallets.id, {
+      onDelete: "set null"
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    merchantAssetAddressUnique: uniqueIndex("treasury_wallets_merchant_asset_address_unique").on(
+      table.merchantId,
+      table.network,
+      table.token,
+      table.address
+    ),
+    defaultUnique: uniqueIndex("treasury_wallets_default_unique")
+      .on(table.merchantId, table.network, table.token)
+      .where(sql`${table.isDefault} = true`)
+  })
+);
+
 export const depositAddresses = pgTable(
   "deposit_addresses",
   {
@@ -121,6 +140,7 @@ export const depositAddresses = pgTable(
     token: text("token").notNull(),
     address: text("address").notNull(),
     privateKeyEncrypted: text("private_key_encrypted").notNull(),
+    treasuryWalletId: uuid("treasury_wallet_id").references(() => treasuryWallets.id, { onDelete: "set null" }),
     callbackUrl: text("callback_url"),
     callbackSecretEncrypted: text("callback_secret_encrypted"),
     status: text("status").notNull().default("active"),
@@ -176,6 +196,10 @@ export const tokenTransfers = pgTable(
     blockHash: text("block_hash"),
     confirmations: integer("confirmations").notNull().default(0),
     status: text("status").notNull().default("detected"),
+    settlementStatus: text("settlement_status").notNull().default("pending"),
+    settlementStep: text("settlement_step"),
+    settlementFailureReason: text("settlement_failure_reason"),
+    settlementUpdatedAt: timestamp("settlement_updated_at", { withTimezone: true }).notNull().defaultNow(),
     detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true })
   },
@@ -202,13 +226,15 @@ export const gasTopUps = pgTable(
     network: text("network").notNull(),
     txHash: text("tx_hash"),
     amountWei: text("amount_wei").notNull(),
+    attemptNumber: integer("attempt_number").notNull().default(1),
     status: text("status").notNull(),
     failureReason: text("failure_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true })
   },
   (table) => ({
-    transferUnique: uniqueIndex("gas_top_ups_transfer_unique").on(table.transferId),
+    transferAttemptUnique: uniqueIndex("gas_top_ups_transfer_attempt_unique").on(table.transferId, table.attemptNumber),
+    transferIdx: index("gas_top_ups_transfer_idx").on(table.transferId),
     statusIdx: index("gas_top_ups_status_idx").on(table.status)
   })
 );
@@ -232,13 +258,15 @@ export const sweeps = pgTable(
     amountRaw: text("amount_raw").notNull(),
     amountFormatted: text("amount_formatted").notNull(),
     toAddress: text("to_address").notNull(),
+    attemptNumber: integer("attempt_number").notNull().default(1),
     status: text("status").notNull(),
     failureReason: text("failure_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true })
   },
   (table) => ({
-    transferUnique: uniqueIndex("sweeps_transfer_unique").on(table.transferId),
+    transferAttemptUnique: uniqueIndex("sweeps_transfer_attempt_unique").on(table.transferId, table.attemptNumber),
+    transferIdx: index("sweeps_transfer_idx").on(table.transferId),
     statusIdx: index("sweeps_status_idx").on(table.status)
   })
 );

@@ -1,16 +1,18 @@
 import { assertEnabledToken, enabledNetworks, enabledTokens, type SupportedNetworks } from "../config/networks.js";
 import { badRequest, notFound, unprocessable } from "../errors.js";
 import type { Encryptor } from "../security/encryption.js";
+import { webhookEventTypes } from "../types/domain.js";
 import type {
   Merchant,
   MerchantApiKey,
   NetworkSlug,
+  NotificationPreferences,
   OperationalWallet,
   TokenSymbol,
   TokenTransfer,
   TreasuryWallet,
-  WebhookConfig,
   WebhookEvent,
+  WebhookEventType,
   WalletTransaction,
   WalletTransactionAsset
 } from "../types/domain.js";
@@ -19,6 +21,7 @@ import { normalizeAddress } from "../utils/address.js";
 import { newId } from "../utils/id.js";
 import { generateChainWallet, operationalWalletScopeKey } from "../utils/wallet.js";
 import type { Repository } from "../repositories/repository.js";
+import type { SettlementService } from "./settlement-service.js";
 import type { ChainProvider } from "../worker/chain-provider.js";
 
 interface GenerateGasWalletInput {
@@ -38,6 +41,7 @@ interface RegisterTreasuryWalletInput {
   network: NetworkSlug;
   token: TokenSymbol;
   address: string;
+  label?: string;
 }
 
 interface CreateWalletTransactionInput {
@@ -67,6 +71,7 @@ export class DashboardService {
     private readonly encryptor: Encryptor,
     private readonly networks: SupportedNetworks,
     private readonly chainProvider: ChainProvider,
+    private readonly settlementService: SettlementService,
     private readonly ownerAccountId: string
   ) {}
 
@@ -115,7 +120,7 @@ export class DashboardService {
     const [
       merchants,
       apiKeys,
-      webhookConfigs,
+      notificationPreferences,
       treasuryWallets,
       operationalWallets,
       depositAddresses,
@@ -128,8 +133,8 @@ export class DashboardService {
       await Promise.all([
         this.repo.getMerchant(this.ownerAccountId).then((merchant) => merchant ? [merchant] : []),
         this.repo.listApiKeys(this.ownerAccountId, limit),
-        this.repo.listWebhookConfigs(limit),
-        this.repo.listTreasuryWallets(this.ownerAccountId, limit),
+        this.repo.getNotificationPreferences(this.ownerAccountId),
+        this.repo.listTreasuryWallets({ merchantId: this.ownerAccountId, limit }),
         this.repo.listOperationalWallets({ includeDisabled: false, limit }),
         this.repo.listDepositAddresses({ merchantId: this.ownerAccountId, limit }),
         this.repo.listTransfersForMerchant(this.ownerAccountId, { limit }),
@@ -138,7 +143,6 @@ export class DashboardService {
         this.repo.listWalletTransactions(limit),
         this.repo.listWebhookEvents(limit)
       ]);
-    const ownerWebhookConfigs = webhookConfigs.filter((config) => config.merchantId === this.ownerAccountId);
     const ownerOperationalWallets = operationalWallets.filter((wallet) => wallet.merchantId === this.ownerAccountId || wallet.merchantId === null);
     const ownerGasTopUps = gasTopUps.filter((topUp) => topUp.merchantId === this.ownerAccountId);
     const ownerSweeps = sweeps.filter((sweep) => sweep.merchantId === this.ownerAccountId);
@@ -148,7 +152,7 @@ export class DashboardService {
     return {
       merchants: merchants.map(publicMerchant),
       apiKeys: apiKeys.map(publicApiKey),
-      webhookConfigs: ownerWebhookConfigs.map(publicWebhookConfig),
+      notificationPreferences: publicNotificationPreferences(notificationPreferences, this.ownerAccountId),
       networks: enabledNetworks(this.networks).map((network) => ({
         network: network.slug,
         kind: network.kind,
@@ -169,6 +173,7 @@ export class DashboardService {
         token: address.token,
         address: address.address,
         callbackUrl: address.callbackUrl,
+        treasuryWalletId: address.treasuryWalletId,
         status: address.status,
         externalId: address.externalId,
         expiresAt: address.expiresAt.toISOString(),
@@ -183,6 +188,7 @@ export class DashboardService {
         network: topUp.network,
         txHash: topUp.txHash,
         amountWei: topUp.amountWei,
+        attemptNumber: topUp.attemptNumber,
         status: topUp.status,
         failureReason: topUp.failureReason,
         createdAt: topUp.createdAt.toISOString(),
@@ -199,6 +205,7 @@ export class DashboardService {
         amountRaw: sweep.amountRaw,
         amountFormatted: sweep.amountFormatted,
         toAddress: sweep.toAddress,
+        attemptNumber: sweep.attemptNumber,
         status: sweep.status,
         failureReason: sweep.failureReason,
         createdAt: sweep.createdAt.toISOString(),
@@ -207,6 +214,16 @@ export class DashboardService {
       walletTransactions: ownerWalletTransactions.map(publicWalletTransaction),
       webhooks: ownerWebhooks.map(publicWebhookEvent)
     };
+  }
+
+  async updateNotificationPreferences(merchantId: string, enabledEvents: WebhookEventType[]) {
+    await this.assertMerchant(merchantId);
+    const uniqueEvents = [...new Set(enabledEvents)];
+    const preferences = await this.repo.upsertNotificationPreferences({
+      merchantId,
+      enabledEvents: uniqueEvents
+    });
+    return publicNotificationPreferences(preferences, merchantId);
   }
 
   async getHistory(input: DashboardHistoryInput) {
@@ -253,10 +270,12 @@ export class DashboardService {
     const { network } = assertEnabledToken(this.networks, input.network, input.token);
     const generated = await generateChainWallet(network.kind);
     const address = normalizeAddress(network, generated.address);
-    const scopeKey = operationalWalletScopeKey("treasury", merchant.id, network.slug, input.token);
+    const walletId = newId();
+    const label = input.label ?? `${merchant.name} ${network.slug} ${input.token} treasury`;
+    const scopeKey = `${operationalWalletScopeKey("treasury", merchant.id, network.slug, input.token)}:${walletId}`;
 
     const wallet = await this.repo.upsertOperationalWallet({
-      id: newId(),
+      id: walletId,
       scopeKey,
       merchantId: merchant.id,
       purpose: "treasury",
@@ -264,14 +283,16 @@ export class DashboardService {
       token: input.token,
       address,
       privateKeyEncrypted: this.encryptor.encryptString(generated.privateKey),
-      label: input.label ?? `${merchant.name} ${network.slug} ${input.token} treasury`
+      label
     });
     const treasuryWallet = await this.repo.upsertTreasuryWallet({
       id: newId(),
       merchantId: merchant.id,
       network: network.slug,
       token: input.token,
-      address
+      address,
+      label,
+      operationalWalletId: wallet.id
     });
 
     return {
@@ -284,14 +305,45 @@ export class DashboardService {
     const merchant = await this.assertMerchant(input.merchantId);
     const { network } = assertEnabledToken(this.networks, input.network, input.token);
     const address = normalizeAddress(network, input.address);
+    const label = input.label ?? `${merchant.name} ${network.slug} ${input.token} treasury`;
     const wallet = await this.repo.upsertTreasuryWallet({
       id: newId(),
       merchantId: merchant.id,
       network: network.slug,
       token: input.token,
-      address
+      address,
+      label,
+      operationalWalletId: null
     });
     return publicTreasuryWallet(wallet);
+  }
+
+  async setDefaultTreasuryWallet(treasuryWalletId: string) {
+    const wallet = await this.repo.setDefaultTreasuryWallet(this.ownerAccountId, treasuryWalletId);
+    if (!wallet) {
+      throw notFound("treasury_wallet_not_found", "Treasury wallet was not found");
+    }
+    return publicTreasuryWallet(wallet);
+  }
+
+  async retryDepositSettlement(transferId: string) {
+    const transfer = await this.repo.getTokenTransfer(transferId);
+    if (!transfer || transfer.merchantId !== this.ownerAccountId) {
+      throw notFound("deposit_not_found", "Deposit transfer was not found");
+    }
+    if (transfer.status !== "confirmed" && transfer.status !== "late") {
+      throw unprocessable("deposit_not_ready", "Only confirmed or late deposits can be settled");
+    }
+    if (transfer.settlementStatus === "settled") {
+      return publicTransferForDashboard(transfer);
+    }
+    if (transfer.settlementStatus === "submitted") {
+      throw unprocessable("settlement_already_submitted", "Settlement already has a submitted transaction");
+    }
+
+    await this.settlementService.ensureSettlement(transfer, { forceRetry: true });
+    const updated = await this.repo.getTokenTransfer(transfer.id);
+    return publicTransferForDashboard(updated ?? transfer);
   }
 
   async createWalletTransaction(input: CreateWalletTransactionInput) {
@@ -386,6 +438,7 @@ export class DashboardService {
           token: address.token,
           address: address.address,
           callbackUrl: address.callbackUrl,
+          treasuryWalletId: address.treasuryWalletId,
           status: address.status,
           externalId: address.externalId,
           expiresAt: address.expiresAt.toISOString(),
@@ -447,6 +500,9 @@ function publicTreasuryWallet(wallet: TreasuryWallet) {
     network: wallet.network,
     token: wallet.token,
     address: wallet.address,
+    label: wallet.label,
+    isDefault: wallet.isDefault,
+    operationalWalletId: wallet.operationalWalletId,
     createdAt: wallet.createdAt.toISOString(),
     updatedAt: wallet.updatedAt.toISOString()
   };
@@ -463,13 +519,12 @@ function publicApiKey(apiKey: MerchantApiKey) {
   };
 }
 
-function publicWebhookConfig(config: WebhookConfig) {
+function publicNotificationPreferences(preferences: NotificationPreferences | null, merchantId: string) {
   return {
-    merchantId: config.merchantId,
-    url: config.url,
-    active: config.active,
-    createdAt: config.createdAt.toISOString(),
-    updatedAt: config.updatedAt.toISOString()
+    merchantId,
+    enabledEvents: preferences?.enabledEvents ?? [...webhookEventTypes],
+    createdAt: preferences?.createdAt.toISOString() ?? null,
+    updatedAt: preferences?.updatedAt.toISOString() ?? null
   };
 }
 
@@ -506,6 +561,10 @@ function publicTransferForDashboard(transfer: TokenTransfer) {
     blockHash: transfer.blockHash,
     confirmations: transfer.confirmations,
     status: transfer.status,
+    settlementStatus: transfer.settlementStatus,
+    settlementStep: transfer.settlementStep,
+    settlementFailureReason: transfer.settlementFailureReason,
+    settlementUpdatedAt: transfer.settlementUpdatedAt.toISOString(),
     detectedAt: transfer.detectedAt.toISOString(),
     confirmedAt: transfer.confirmedAt?.toISOString() ?? null
   };
@@ -539,6 +598,7 @@ function publicGasTopUp(topUp: {
   network: NetworkSlug;
   txHash: string | null;
   amountWei: string;
+  attemptNumber: number;
   status: string;
   failureReason: string | null;
   createdAt: Date;
@@ -552,6 +612,7 @@ function publicGasTopUp(topUp: {
     network: topUp.network,
     txHash: topUp.txHash,
     amountWei: topUp.amountWei,
+    attemptNumber: topUp.attemptNumber,
     status: topUp.status,
     failureReason: topUp.failureReason,
     createdAt: topUp.createdAt.toISOString(),
@@ -570,6 +631,7 @@ function publicSweep(sweep: {
   amountRaw: string;
   amountFormatted: string;
   toAddress: string;
+  attemptNumber: number;
   status: string;
   failureReason: string | null;
   createdAt: Date;
@@ -586,6 +648,7 @@ function publicSweep(sweep: {
     amountRaw: sweep.amountRaw,
     amountFormatted: sweep.amountFormatted,
     toAddress: sweep.toAddress,
+    attemptNumber: sweep.attemptNumber,
     status: sweep.status,
     failureReason: sweep.failureReason,
     createdAt: sweep.createdAt.toISOString(),

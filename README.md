@@ -39,6 +39,7 @@ The v1 scope is stablecoin deposits plus admin-controlled treasury/gas wallet op
 
 - [Docker and Compose](docs/DOCKER.md)
 - [Testnet setup](docs/TESTNET.md)
+- [Application flows and diagrams](docs/FLOWS.md)
 - [Callbacks, payloads, and lifecycle](docs/CALLBACKS.md)
 
 ## Setup
@@ -54,7 +55,19 @@ npm run db:migrate
 npm run dev
 ```
 
-Run the worker in a second process:
+Run API and worker together with hot reload:
+
+```bash
+npm run dev:all
+```
+
+For the local testnet config:
+
+```bash
+npm run dev:testnet
+```
+
+Or run the worker in a second process:
 
 ```bash
 npm run dev:worker
@@ -141,7 +154,7 @@ GAS_WALLET_PRIVATE_KEY_ETHEREUM=0x...
 
 The supported v1 mainnet slugs are `ethereum`, `bsc`, `polygon`, `arbitrum`, `optimism`, `base`, and `tron`.
 
-The supported v1 testnet slugs are `sepolia`, `bscTestnet`, `polygonAmoy`, `arbitrumSepolia`, `optimismSepolia`, `baseSepolia`, and `nile`.
+The supported v1 testnet slugs are `sepolia`, `bscTestnet`, `polygonAmoy`, `arbitrumSepolia`, `optimismSepolia`, `baseSepolia`, `avalancheFuji`, `lineaSepolia`, `scrollSepolia`, and `nile`.
 
 ## Admin Dashboard
 
@@ -161,13 +174,15 @@ Login uses:
 Dashboard capabilities:
 
 - View enabled networks, deposit addresses, deposits, gas top-ups, sweeps, callback events, and dashboard wallet transactions.
-- View charts for deposit activity, confirmed token volume, deposit status, wallet transaction status, and webhook status.
-- Browse paginated, filterable histories for deposits, deposit addresses, wallet transactions, gas top-ups, sweeps, and webhook events.
+- View charts for deposit activity, confirmed token volume, deposit status, wallet transaction status, and callback status.
+- Browse paginated, filterable histories for deposits, deposit addresses, wallet transactions, gas top-ups, sweeps, and callback events.
 - Create owner API keys and copy the one-time API secret.
-- Configure the fallback owner webhook URL, secret, and active status.
+- Choose which lifecycle event types should trigger per-request callbacks.
 - Generate encrypted platform gas wallets per network.
-- Generate encrypted owner treasury wallets per network/token. This also configures the treasury address used by automatic sweeps.
-- Register an externally managed treasury address without storing a private key.
+- Generate encrypted owner treasury wallets per network/token. The first treasury for an asset becomes the default sweep destination.
+- Register externally managed treasury addresses without storing private keys.
+- Mark one treasury wallet as the default for each network/token, while merchants may select any treasury ID per deposit request.
+- Retry blocked deposit settlement after gas wallet funding/configuration or sweep failures.
 - Submit native-token transfers from generated gas wallets.
 - Submit treasury token transfers from generated treasury wallets to saved or external addresses.
 
@@ -193,11 +208,10 @@ Owner-scoped endpoints:
 - `POST /admin/api-keys`
 - `POST /admin/api-keys/:apiKeyId/rotate`
 - `POST /admin/api-keys/:apiKeyId/revoke`
-- `PUT /admin/webhook`
 - `PUT /admin/treasury-wallets`
 - `GET /admin/networks`
 
-API key and webhook secret responses include the raw secret once. Store them in the client application; the service stores encrypted copies.
+API key responses include the raw secret once. Store them in the client application; the service stores encrypted copies. Deposit callback secrets are supplied per `POST /v1/deposit-addresses` request and are stored encrypted.
 
 Example owner bootstrap:
 
@@ -209,13 +223,6 @@ curl http://localhost:3000/admin/owner \
 ```bash
 curl -X POST http://localhost:3000/admin/api-keys \
   -H "Authorization: Bearer $ADMIN_API_KEY"
-```
-
-```bash
-curl -X PUT http://localhost:3000/admin/webhook \
-  -H "Authorization: Bearer $ADMIN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://app.example/webhooks/crypto","secret":"use-a-long-random-secret"}'
 ```
 
 ```bash
@@ -260,6 +267,7 @@ const nonce = randomUUID();
 const body = JSON.stringify({
   network: "ethereum",
   token: "USDT",
+  treasuryWalletId: "optional-selected-treasury-uuid",
   callbackUrl: "https://app.example/webhooks/crypto/invoice-123",
   callbackSecret: "use-a-long-random-per-deposit-secret",
   ttlSeconds: 3600,
@@ -299,6 +307,7 @@ Content-Type: application/json
 {
   "network": "ethereum",
   "token": "USDT",
+  "treasuryWalletId": "optional-selected-treasury-uuid",
   "callbackUrl": "https://app.example/webhooks/crypto/invoice-123",
   "callbackSecret": "use-a-long-random-per-deposit-secret",
   "ttlSeconds": 3600,
@@ -310,10 +319,11 @@ Content-Type: application/json
 
 Other endpoints:
 
+- `GET /v1/treasury-wallets?network=ethereum&token=USDT`
 - `GET /v1/deposit-addresses/:id`
 - `GET /v1/deposits?status=confirmed&limit=50`
 
-Generated private keys are never returned by the API. `merchantId` in API and webhook payloads is the internal owner id used to relate records.
+If `treasuryWalletId` is omitted, the deposit uses the default treasury wallet for the requested network/token. Generated private keys are never returned by the API. `merchantId` in API and webhook payloads is the internal owner id used to relate records.
 
 Response shape:
 
@@ -324,6 +334,7 @@ Response shape:
   "network": "ethereum",
   "token": "USDT",
   "address": "0x...",
+  "treasuryWalletId": "uuid",
   "callbackUrl": "https://app.example/webhooks/crypto/invoice-123",
   "status": "active",
   "expiresAt": "2026-06-04T20:00:00.000Z",
@@ -337,9 +348,11 @@ Response shape:
 }
 ```
 
+Gas top-up and sweep failures still emit `gas.topup.failed` or `sweep.failed` callbacks, but the deposit settlement remains pending in the dashboard. After an operator funds/configures the gas wallet or resolves the sweep issue, use **Retry Settlement** in the deposit history to create a new gas top-up or sweep attempt while preserving the failed attempt history.
+
 ## Webhooks
 
-Each deposit address has its own callback URL and signing secret from `POST /v1/deposit-addresses`. All lifecycle callbacks for that deposit are delivered to that callback URL. The owner webhook config remains available as an operational fallback for old rows or non-deposit-scoped events.
+Each deposit address has its own callback URL and signing secret from `POST /v1/deposit-addresses`. All lifecycle callbacks for that deposit are delivered to that callback URL. The dashboard notification settings can enable or disable specific lifecycle event types globally.
 
 Outgoing webhooks are signed with the per-deposit callback secret:
 

@@ -13,6 +13,7 @@ export interface CreateDepositAddressInput {
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
+  treasuryWalletId?: string;
   callbackUrl: string;
   callbackSecret: string;
   ttlSeconds?: number;
@@ -32,11 +33,19 @@ export class DepositService {
   async createDepositAddress(input: CreateDepositAddressInput) {
     const { network: networkConfig } = assertEnabledToken(this.networks, input.network, input.token);
 
-    const treasury = await this.repo.getTreasuryWallet(input.merchantId, input.network, input.token);
+    const treasury = input.treasuryWalletId
+      ? await this.repo.getTreasuryWalletById(input.merchantId, input.treasuryWalletId)
+      : await this.repo.getTreasuryWallet(input.merchantId, input.network, input.token);
     if (!treasury) {
       throw unprocessable(
         "treasury_wallet_missing",
         `Treasury wallet must be configured before creating ${input.token} deposit addresses on ${input.network}`
+      );
+    }
+    if (treasury.network !== input.network || treasury.token !== input.token) {
+      throw unprocessable(
+        "treasury_wallet_mismatch",
+        "Treasury wallet must match the requested network and token"
       );
     }
 
@@ -50,6 +59,7 @@ export class DepositService {
       token: input.token,
       address: normalizeAddress(networkConfig, wallet.address),
       privateKeyEncrypted: this.encryptor.encryptString(wallet.privateKey),
+      treasuryWalletId: treasury.id,
       callbackUrl: input.callbackUrl,
       callbackSecretEncrypted: this.encryptor.encryptString(input.callbackSecret),
       expiresAt,
@@ -62,7 +72,8 @@ export class DepositService {
       "wallet.created",
       {
         depositAddress: publicDepositAddress(depositAddress),
-        treasuryWallet: treasury.address
+        treasuryWallet: treasury.address,
+        treasuryWalletId: treasury.id
       },
       { depositAddressId: depositAddress.id }
     );
@@ -90,6 +101,16 @@ export class DepositService {
   async listDeposits(merchantId: string, status: TokenTransfer["status"] | undefined, limit: number) {
     const transfers = await this.repo.listTransfersForMerchant(merchantId, { status, limit });
     return { deposits: transfers.map(publicTransfer) };
+  }
+
+  async listTreasuryWallets(
+    merchantId: string,
+    network: NetworkSlug | undefined,
+    token: TokenSymbol | undefined,
+    limit: number
+  ) {
+    const wallets = await this.repo.listTreasuryWallets({ merchantId, network, token, limit });
+    return { treasuryWallets: wallets.map(publicTreasuryWallet) };
   }
 
   async assertIdempotency(
@@ -145,6 +166,7 @@ export function publicDepositAddress(depositAddress: DepositAddress) {
     network: depositAddress.network,
     token: depositAddress.token,
     address: depositAddress.address,
+    treasuryWalletId: depositAddress.treasuryWalletId,
     callbackUrl: depositAddress.callbackUrl,
     status: depositAddress.status,
     expiresAt: depositAddress.expiresAt.toISOString(),
@@ -170,7 +192,37 @@ export function publicTransfer(transfer: TokenTransfer) {
     blockNumber: transfer.blockNumber.toString(10),
     confirmations: transfer.confirmations,
     status: transfer.status,
+    settlementStatus: transfer.settlementStatus,
+    settlementStep: transfer.settlementStep,
+    settlementFailureReason: transfer.settlementFailureReason,
+    settlementUpdatedAt: transfer.settlementUpdatedAt.toISOString(),
     detectedAt: transfer.detectedAt.toISOString(),
     confirmedAt: transfer.confirmedAt?.toISOString() ?? null
+  };
+}
+
+export function publicTreasuryWallet(wallet: {
+  id: string;
+  merchantId: string;
+  network: NetworkSlug;
+  token: TokenSymbol;
+  address: string;
+  label: string;
+  isDefault: boolean;
+  operationalWalletId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: wallet.id,
+    merchantId: wallet.merchantId,
+    network: wallet.network,
+    token: wallet.token,
+    address: wallet.address,
+    label: wallet.label,
+    isDefault: wallet.isDefault,
+    operationalWalletId: wallet.operationalWalletId,
+    createdAt: wallet.createdAt.toISOString(),
+    updatedAt: wallet.updatedAt.toISOString()
   };
 }

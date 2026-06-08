@@ -1,17 +1,22 @@
 import React, { FormEvent, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   ArrowRightLeft,
   BellRing,
   CheckCircle2,
+  CircleOff,
   Coins,
   Copy,
+  Gauge,
   KeyRound,
   LogOut,
   Plus,
+  RadioTower,
   RefreshCw,
   Send,
   ShieldCheck,
+  SlidersHorizontal,
   Wallet
 } from "lucide-react";
 import {
@@ -34,13 +39,37 @@ import "./styles.css";
 type NetworkKind = "evm" | "tron";
 type TokenSymbol = "USDT" | "USDC";
 type WalletPurpose = "gas" | "treasury";
-type Status = "active" | "expired" | "detected" | "confirmed" | "late" | "submitted" | "failed" | "pending" | "sent";
+type Status =
+  | "active"
+  | "expired"
+  | "detected"
+  | "confirmed"
+  | "late"
+  | "submitted"
+  | "failed"
+  | "pending"
+  | "sent"
+  | "settled"
+  | "gas_top_up"
+  | "sweep";
 type HistoryResource = "depositAddresses" | "deposits" | "walletTransactions" | "gasTopUps" | "sweeps" | "webhooks";
+type WebhookEventType =
+  | "wallet.created"
+  | "wallet.expired"
+  | "transfer.detected"
+  | "deposit.confirmed"
+  | "deposit.late_detected"
+  | "gas.topup.submitted"
+  | "gas.topup.confirmed"
+  | "gas.topup.failed"
+  | "sweep.submitted"
+  | "sweep.confirmed"
+  | "sweep.failed";
 
 interface Merchant {
   id: string;
-  name: string;
   status: string;
+  name: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,12 +83,11 @@ interface ApiKey {
   lastUsedAt: string | null;
 }
 
-interface WebhookConfig {
+interface NotificationPreferences {
   merchantId: string;
-  url: string;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
+  enabledEvents: WebhookEventType[];
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 interface EnabledNetwork {
@@ -76,6 +104,10 @@ interface TreasuryWallet {
   network: string;
   token: TokenSymbol;
   address: string;
+  label: string;
+  isDefault: boolean;
+  operationalWalletId: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -98,6 +130,7 @@ interface DepositAddress {
   network: string;
   token: TokenSymbol;
   address: string;
+  treasuryWalletId: string | null;
   status: "active" | "expired";
   externalId: string | null;
   expiresAt: string;
@@ -116,6 +149,10 @@ interface Deposit {
   amountFormatted: string;
   confirmations: number;
   status: "detected" | "confirmed" | "late";
+  settlementStatus: "pending" | "submitted" | "settled";
+  settlementStep: "gas_top_up" | "sweep" | null;
+  settlementFailureReason: string | null;
+  settlementUpdatedAt: string;
   detectedAt: string;
   confirmedAt: string | null;
 }
@@ -126,6 +163,7 @@ interface GasTopUp {
   network: string;
   txHash: string | null;
   amountWei: string;
+  attemptNumber: number;
   status: "submitted" | "confirmed" | "failed";
   failureReason: string | null;
   createdAt: string;
@@ -139,6 +177,7 @@ interface Sweep {
   txHash: string | null;
   amountFormatted: string;
   toAddress: string;
+  attemptNumber: number;
   status: "submitted" | "confirmed" | "failed";
   failureReason: string | null;
   createdAt: string;
@@ -175,7 +214,7 @@ interface WebhookEvent {
 interface DashboardData {
   merchants: Merchant[];
   apiKeys: ApiKey[];
-  webhookConfigs: WebhookConfig[];
+  notificationPreferences: NotificationPreferences;
   networks: EnabledNetwork[];
   treasuryWallets: TreasuryWallet[];
   operationalWallets: OperationalWallet[];
@@ -215,14 +254,27 @@ type Tab = "overview" | "settings" | "wallets" | "deposits" | "transfers" | "web
 
 const tokenStorageKey = "crypto-dashboard-token";
 const tabs: Array<{ id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
-  { id: "overview", label: "Overview", icon: ShieldCheck },
+  { id: "overview", label: "Overview", icon: Gauge },
   { id: "settings", label: "Settings", icon: KeyRound },
   { id: "wallets", label: "Wallets", icon: Wallet },
   { id: "deposits", label: "Deposits", icon: Coins },
   { id: "transfers", label: "Transfers", icon: ArrowRightLeft },
-  { id: "webhooks", label: "Webhooks", icon: BellRing }
+  { id: "webhooks", label: "Callbacks", icon: BellRing }
 ];
-const chartColors = ["#2563eb", "#0f766e", "#f59e0b", "#dc2626", "#7c3aed", "#64748b"];
+const chartColors = ["#0891b2", "#16a34a", "#f59e0b", "#e11d48", "#7c3aed", "#475569"];
+const notificationEvents: Array<{ type: WebhookEventType; label: string; group: "wallet" | "deposit" | "gas" | "sweep" }> = [
+  { type: "wallet.created", label: "Wallet created", group: "wallet" },
+  { type: "wallet.expired", label: "Wallet expired", group: "wallet" },
+  { type: "transfer.detected", label: "Transfer detected", group: "deposit" },
+  { type: "deposit.confirmed", label: "Deposit confirmed", group: "deposit" },
+  { type: "deposit.late_detected", label: "Late deposit detected", group: "deposit" },
+  { type: "gas.topup.submitted", label: "Gas top-up submitted", group: "gas" },
+  { type: "gas.topup.confirmed", label: "Gas top-up confirmed", group: "gas" },
+  { type: "gas.topup.failed", label: "Gas top-up failed", group: "gas" },
+  { type: "sweep.submitted", label: "Sweep submitted", group: "sweep" },
+  { type: "sweep.confirmed", label: "Sweep confirmed", group: "sweep" },
+  { type: "sweep.failed", label: "Sweep failed", group: "sweep" }
+];
 
 function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? "");
@@ -299,7 +351,7 @@ function App() {
           <div className="brand-mark"><ShieldCheck size={22} /></div>
           <div>
             <strong>Stablecoin Gateway</strong>
-            <span>Admin dashboard</span>
+            <span>Owner console</span>
           </div>
         </div>
         <nav className="nav-tabs">
@@ -325,10 +377,18 @@ function App() {
             <h1>{tabs.find((item) => item.id === tab)?.label}</h1>
             <p>{data ? `${data.networks.length} networks enabled` : "Loading dashboard data"}</p>
           </div>
-          <button className="secondary" onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw size={16} />
-            Refresh
-          </button>
+          <div className="topbar-actions">
+            {data && overview ? (
+              <div className="quick-stats">
+                <span><RadioTower size={15} />{data.networks.length} networks</span>
+                <span><BellRing size={15} />{overview.stats.pendingWebhooks ?? 0} pending</span>
+              </div>
+            ) : null}
+            <button className="secondary icon-button" onClick={() => void refresh()} disabled={loading} title="Refresh">
+              <RefreshCw size={16} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </header>
 
         {notice ? <div className="notice success"><CheckCircle2 size={16} />{notice}</div> : null}
@@ -377,7 +437,7 @@ function LoginScreen({ onLogin }: { onLogin(token: string): void }) {
           <div className="brand-mark"><ShieldCheck size={24} /></div>
           <div>
             <strong>Stablecoin Gateway</strong>
-            <span>Admin dashboard</span>
+            <span>Owner console</span>
           </div>
         </div>
         <label>
@@ -424,7 +484,7 @@ function DashboardView({
     case "wallets":
       return <WalletsPanel data={data} token={token} mutate={mutate} />;
     case "deposits":
-      return <DepositsPanel data={data} />;
+      return <DepositsPanel data={data} token={token} mutate={mutate} />;
     case "transfers":
       return <TransfersPanel data={data} token={token} mutate={mutate} />;
     case "webhooks":
@@ -434,36 +494,40 @@ function DashboardView({
 
 function OverviewPanel({ overview, data }: { overview: Overview; data: DashboardData }) {
   const statItems = [
-    ["Owner account", overview.stats.merchants ?? 0],
-    ["Active temp wallets", overview.stats.activeDepositAddresses ?? 0],
-    ["Confirmed deposits", overview.stats.confirmedDeposits ?? 0],
-    ["Pending webhooks", overview.stats.pendingWebhooks ?? 0],
-    ["Operational wallets", overview.stats.operationalWallets ?? 0],
-    ["Submitted transfers", overview.stats.submittedWalletTransactions ?? 0]
+    { label: "Networks", value: data.networks.length, icon: RadioTower, tone: "cyan" },
+    { label: "Active wallets", value: overview.stats.activeDepositAddresses ?? 0, icon: Wallet, tone: "green" },
+    { label: "Confirmed deposits", value: overview.stats.confirmedDeposits ?? 0, icon: Coins, tone: "amber" },
+    { label: "Pending callbacks", value: overview.stats.pendingWebhooks ?? 0, icon: BellRing, tone: "rose" },
+    { label: "Operational wallets", value: overview.stats.operationalWallets ?? 0, icon: ShieldCheck, tone: "violet" },
+    { label: "Submitted transfers", value: overview.stats.submittedWalletTransactions ?? 0, icon: Activity, tone: "slate" }
   ];
 
   return (
     <section className="stack">
       <div className="metric-grid">
-        {statItems.map(([label, value]) => (
-          <div className="metric" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-          </div>
-        ))}
+        {statItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div className={`metric ${item.tone}`} key={item.label}>
+              <div className="metric-icon"><Icon size={18} /></div>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          );
+        })}
       </div>
       <div className="chart-grid">
         <Panel title="Deposit activity">
           <div className="chart-box">
             <ResponsiveContainer width="100%" height={260}>
               <AreaChart data={overview.charts.depositTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ec" />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Legend />
-                <Area type="monotone" dataKey="count" name="Detected" stroke="#2563eb" fill="#bfdbfe" />
-                <Area type="monotone" dataKey="confirmedCount" name="Confirmed" stroke="#0f766e" fill="#99f6e4" />
+                <Area type="monotone" dataKey="count" name="Detected" stroke="#0891b2" fill="#a5f3fc" />
+                <Area type="monotone" dataKey="confirmedCount" name="Confirmed" stroke="#16a34a" fill="#bbf7d0" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -472,11 +536,11 @@ function OverviewPanel({ overview, data }: { overview: Overview; data: Dashboard
           <div className="chart-box">
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={overview.charts.tokenVolume}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ec" />
                 <XAxis dataKey="asset" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                <Bar dataKey="amount" name="Amount" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="amount" name="Amount" fill="#0891b2" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -485,9 +549,9 @@ function OverviewPanel({ overview, data }: { overview: Overview; data: Dashboard
       <div className="chart-grid three">
         <PiePanel title="Deposit status" data={overview.charts.depositStatus} />
         <PiePanel title="Wallet transaction status" data={overview.charts.walletTransactionStatus} />
-        <PiePanel title="Webhook status" data={overview.charts.webhookStatus} />
+        <PiePanel title="Callback status" data={overview.charts.webhookStatus} />
       </div>
-      <div className="split-grid">
+      <div className="split-grid dashboard-tables">
         <Panel title="Recent deposits">
           <DepositsTable deposits={overview.recentDeposits} compact />
         </Panel>
@@ -529,9 +593,12 @@ function SettingsPanel({
   mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [apiKeyResult, setApiKeyResult] = useState<{ apiKey: string; apiSecret: string } | null>(null);
-  const [webhookUrl, setWebhookUrl] = useState("");
-  const [webhookSecret, setWebhookSecret] = useState("");
-  const [webhookActive, setWebhookActive] = useState(true);
+  const notificationPreferenceKey = data.notificationPreferences.enabledEvents.join("|");
+  const [enabledEvents, setEnabledEvents] = useState<WebhookEventType[]>(data.notificationPreferences.enabledEvents);
+
+  useEffect(() => {
+    setEnabledEvents(data.notificationPreferences.enabledEvents);
+  }, [data.notificationPreferences.updatedAt, notificationPreferenceKey]);
 
   async function createApiKey(event: FormEvent) {
     event.preventDefault();
@@ -544,37 +611,40 @@ function SettingsPanel({
     }
   }
 
-  async function configureWebhook(event: FormEvent) {
+  async function saveNotificationPreferences(event: FormEvent) {
     event.preventDefault();
     await mutate(
-      apiPut("/dashboard/api/webhook", token, {
-        url: webhookUrl,
-        secret: webhookSecret || undefined,
-        active: webhookActive
+      apiPut("/dashboard/api/notification-preferences", token, {
+        enabledEvents
       }),
-      "Webhook configured"
+      "Notification preferences saved"
     );
-    setWebhookSecret("");
+  }
+
+  function toggleNotificationEvent(type: WebhookEventType) {
+    setEnabledEvents((current) =>
+      current.includes(type) ? current.filter((item) => item !== type) : [...current, type]
+    );
   }
 
   return (
     <section className="stack">
-      <Panel title="Owner account">
-        <table>
-          <thead><tr><th>Name</th><th>Status</th><th>ID</th></tr></thead>
-          <tbody>
-            {data.merchants.map((merchant) => (
-              <tr key={merchant.id}>
-                <td>{merchant.name}</td>
-                <td><StatusPill status={merchant.status as Status} /></td>
-                <td><CopyText value={merchant.id} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
       <div className="split-grid">
-        <Panel title="Create API key">
+        <Panel title="Owner account">
+          <table>
+            <thead><tr><th>Name</th><th>Status</th><th>ID</th></tr></thead>
+            <tbody>
+              {data.merchants.map((merchant) => (
+                <tr key={merchant.id}>
+                  <td>{merchant.name}</td>
+                  <td><StatusPill status={merchant.status as Status} /></td>
+                  <td><CopyText value={merchant.id} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
+        <Panel title="API access">
           <form className="form-grid" onSubmit={createApiKey}>
             <button className="primary"><KeyRound size={16} />Create key</button>
           </form>
@@ -585,30 +655,49 @@ function SettingsPanel({
             </div>
           ) : null}
         </Panel>
-        <Panel title="Configure webhook">
-          <form className="form-grid" onSubmit={configureWebhook}>
-            <label>
-              URL
-              <input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} required />
-            </label>
-            <label>
-              Secret
-              <input value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} />
-            </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={webhookActive} onChange={(event) => setWebhookActive(event.target.checked)} />
-              Active
-            </label>
-            <button className="primary"><ShieldCheck size={16} />Save</button>
-          </form>
-        </Panel>
       </div>
       <div className="split-grid">
         <Panel title="API keys">
           <ApiKeysTable apiKeys={data.apiKeys} />
         </Panel>
-        <Panel title="Webhook configs">
-          <WebhookConfigsTable configs={data.webhookConfigs} />
+        <Panel title="Notification events">
+          <form className="preference-form" onSubmit={saveNotificationPreferences}>
+            <div className="preference-toolbar">
+              <div className="preference-count">
+                <SlidersHorizontal size={16} />
+                <strong>{enabledEvents.length}</strong>
+                <span>enabled</span>
+              </div>
+              <div className="preference-actions">
+                <button className="secondary" type="button" onClick={() => setEnabledEvents(notificationEvents.map((item) => item.type))}>
+                  <CheckCircle2 size={16} />All
+                </button>
+                <button className="secondary" type="button" onClick={() => setEnabledEvents([])}>
+                  <CircleOff size={16} />None
+                </button>
+                <button className="primary"><ShieldCheck size={16} />Save</button>
+              </div>
+            </div>
+            <div className="event-grid">
+              {notificationEvents.map((item) => {
+                const checked = enabledEvents.includes(item.type);
+                return (
+                  <label className={`event-option ${checked ? "selected" : ""}`} key={item.type}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleNotificationEvent(item.type)}
+                    />
+                    <span className="event-copy">
+                      <strong>{item.label}</strong>
+                      <small>{item.type}</small>
+                    </span>
+                    <span className={`event-group ${item.group}`}>{item.group}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </form>
         </Panel>
       </div>
     </section>
@@ -637,7 +726,7 @@ function WalletsPanel({
         <OperationalWalletsTable wallets={data.operationalWallets} />
       </Panel>
       <Panel title="Treasury wallets">
-        <TreasuryWalletsTable wallets={data.treasuryWallets} />
+        <TreasuryWalletsTable wallets={data.treasuryWallets} token={token} mutate={mutate} />
       </Panel>
     </section>
   );
@@ -731,12 +820,17 @@ function RegisterTreasuryWalletForm({
   const [network, setNetwork] = useState(data.networks[0]?.network ?? "");
   const [tokenSymbol, setTokenSymbol] = useState<TokenSymbol>("USDT");
   const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("");
   const tokens = tokensForNetwork(data.networks, network);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await mutate(apiPost("/dashboard/api/treasury-wallets", token, { network, token: tokenSymbol, address }), "Treasury wallet registered");
+    await mutate(
+      apiPost("/dashboard/api/treasury-wallets", token, { network, token: tokenSymbol, address, label: label || undefined }),
+      "Treasury wallet registered"
+    );
     setAddress("");
+    setLabel("");
   }
 
   return (
@@ -747,12 +841,36 @@ function RegisterTreasuryWalletForm({
         Address
         <input value={address} onChange={(event) => setAddress(event.target.value)} required />
       </label>
+      <label>
+        Label
+        <input value={label} onChange={(event) => setLabel(event.target.value)} />
+      </label>
       <button className="primary"><Plus size={16} />Register</button>
     </form>
   );
 }
 
-function DepositsPanel({ data }: { data: DashboardData }) {
+function DepositsPanel({
+  data,
+  token,
+  mutate
+}: {
+  data: DashboardData;
+  token: string;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
+}) {
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+
+  async function retrySettlement(transferId: string) {
+    const result = await mutate(
+      apiPost(`/dashboard/api/deposits/${transferId}/retry-settlement`, token, {}),
+      "Settlement retry submitted"
+    );
+    if (result) {
+      setHistoryRefreshKey((current) => current + 1);
+    }
+  }
+
   return (
     <section className="stack">
       <HistoryPanel
@@ -764,6 +882,7 @@ function DepositsPanel({ data }: { data: DashboardData }) {
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
           { header: "Address", render: (row) => <CopyText value={stringField(row, "address")} /> },
+          { header: "Treasury", render: (row) => stringField(row, "treasuryWalletId") ? <CopyText value={stringField(row, "treasuryWalletId")} /> : "-" },
           { header: "Expires", render: (row) => formatDate(stringField(row, "expiresAt")) }
         ]}
       />
@@ -772,12 +891,24 @@ function DepositsPanel({ data }: { data: DashboardData }) {
         resource="deposits"
         networks={data.networks}
         statusOptions={["detected", "confirmed", "late"]}
+        refreshKey={historyRefreshKey}
         columns={[
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
           { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Settlement", render: (row) => <SettlementStatus row={row} /> },
           { header: "Tx", render: (row) => <CopyText value={stringField(row, "txHash")} /> },
-          { header: "Detected", render: (row) => formatDate(stringField(row, "detectedAt")) }
+          { header: "Detected", render: (row) => formatDate(stringField(row, "detectedAt")) },
+          {
+            header: "Action",
+            render: (row) => canRetrySettlement(row)
+              ? (
+                <button className="secondary compact-button" type="button" onClick={() => void retrySettlement(stringField(row, "id"))}>
+                  <RefreshCw size={15} />Retry
+                </button>
+              )
+              : "-"
+          }
         ]}
       />
     </section>
@@ -820,6 +951,7 @@ function TransfersPanel({
         hideTokenFilter
         columns={[
           { header: "Network", render: (row) => stringField(row, "network") },
+          { header: "Attempt", render: (row) => stringField(row, "attemptNumber") },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
           { header: "Tx / Error", render: (row) => stringField(row, "txHash") ? <CopyText value={stringField(row, "txHash")} /> : stringField(row, "failureReason") || "-" },
           { header: "Created", render: (row) => formatDate(stringField(row, "createdAt")) }
@@ -832,6 +964,7 @@ function TransfersPanel({
         statusOptions={["submitted", "confirmed", "failed"]}
         columns={[
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
+          { header: "Attempt", render: (row) => stringField(row, "attemptNumber") },
           { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
           { header: "Tx / Error", render: (row) => stringField(row, "txHash") ? <CopyText value={stringField(row, "txHash")} /> : stringField(row, "failureReason") || "-" }
@@ -903,7 +1036,7 @@ function WebhooksPanel({ data }: { data: DashboardData }) {
   return (
     <section className="stack">
       <HistoryPanel
-        title="Webhook event history"
+        title="Callback delivery history"
         resource="webhooks"
         networks={data.networks}
         statusOptions={["pending", "sent", "failed"]}
@@ -921,6 +1054,29 @@ function WebhooksPanel({ data }: { data: DashboardData }) {
   );
 }
 
+function SettlementStatus({ row }: { row: Record<string, unknown> }) {
+  const status = stringField(row, "settlementStatus") || "pending";
+  const step = stringField(row, "settlementStep");
+  const reason = stringField(row, "settlementFailureReason");
+
+  return (
+    <div className="settlement-cell">
+      <StatusPill status={status} />
+      {step ? <small>{step}</small> : null}
+      {reason ? <span>{reason}</span> : null}
+    </div>
+  );
+}
+
+function canRetrySettlement(row: Record<string, unknown>): boolean {
+  const depositStatus = stringField(row, "status");
+  return (
+    (depositStatus === "confirmed" || depositStatus === "late") &&
+    stringField(row, "settlementStatus") === "pending" &&
+    Boolean(stringField(row, "settlementFailureReason"))
+  );
+}
+
 interface HistoryColumn {
   header: string;
   render(row: Record<string, unknown>): React.ReactNode;
@@ -933,7 +1089,8 @@ function HistoryPanel({
   statusOptions,
   columns,
   hideNetworkFilter = false,
-  hideTokenFilter = false
+  hideTokenFilter = false,
+  refreshKey = 0
 }: {
   title: string;
   resource: HistoryResource;
@@ -942,6 +1099,7 @@ function HistoryPanel({
   columns: HistoryColumn[];
   hideNetworkFilter?: boolean;
   hideTokenFilter?: boolean;
+  refreshKey?: number;
 }) {
   const token = sessionStorage.getItem(tokenStorageKey) ?? "";
   const [status, setStatus] = useState("");
@@ -990,7 +1148,7 @@ function HistoryPanel({
   useEffect(() => {
     setOffset(0);
     void load(0);
-  }, [resource, status, network, tokenFilter, limit]);
+  }, [resource, status, network, tokenFilter, limit, refreshKey]);
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
@@ -1062,17 +1220,41 @@ function OperationalWalletsTable({ wallets }: { wallets: OperationalWallet[] }) 
   );
 }
 
-function TreasuryWalletsTable({ wallets }: { wallets: TreasuryWallet[] }) {
+function TreasuryWalletsTable({
+  wallets,
+  token,
+  mutate
+}: {
+  wallets: TreasuryWallet[];
+  token: string;
+  mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
+}) {
+  async function setDefault(wallet: TreasuryWallet) {
+    await mutate(
+      apiPost(`/dashboard/api/treasury-wallets/${wallet.id}/default`, token, {}),
+      "Default treasury updated"
+    );
+  }
+
   return (
     <table>
-      <thead><tr><th>Network</th><th>Token</th><th>Address</th><th>Updated</th></tr></thead>
+      <thead><tr><th>Label</th><th>Asset</th><th>Default</th><th>ID</th><th>Address</th><th>Updated</th><th>Action</th></tr></thead>
       <tbody>
         {wallets.map((wallet) => (
           <tr key={wallet.id}>
-            <td>{wallet.network}</td>
-            <td>{wallet.token}</td>
+            <td>{wallet.label}</td>
+            <td>{wallet.network} {wallet.token}</td>
+            <td>{wallet.isDefault ? <StatusPill status="default" /> : "-"}</td>
+            <td><CopyText value={wallet.id} /></td>
             <td><CopyText value={wallet.address} /></td>
             <td>{formatDate(wallet.updatedAt)}</td>
+            <td>
+              {wallet.isDefault ? "-" : (
+                <button className="secondary compact-button" type="button" onClick={() => void setDefault(wallet)}>
+                  <CheckCircle2 size={15} />Default
+                </button>
+              )}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -1091,23 +1273,6 @@ function ApiKeysTable({ apiKeys }: { apiKeys: ApiKey[] }) {
             <td><CopyText value={apiKey.publicKey} /></td>
             <td>{apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : "-"}</td>
             <td>{formatDate(apiKey.createdAt)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function WebhookConfigsTable({ configs }: { configs: WebhookConfig[] }) {
-  return (
-    <table>
-      <thead><tr><th>Status</th><th>URL</th><th>Updated</th></tr></thead>
-      <tbody>
-        {configs.map((config) => (
-          <tr key={config.merchantId}>
-            <td><StatusPill status={config.active ? "active" : "disabled"} /></td>
-            <td><CopyText value={config.url} /></td>
-            <td>{formatDate(config.updatedAt)}</td>
           </tr>
         ))}
       </tbody>
@@ -1185,11 +1350,12 @@ function WalletTransactionsTable({
 function GasTopUpsTable({ topUps }: { topUps: GasTopUp[] }) {
   return (
     <table>
-      <thead><tr><th>Network</th><th>Status</th><th>Tx</th><th>Created</th></tr></thead>
+      <thead><tr><th>Network</th><th>Attempt</th><th>Status</th><th>Tx</th><th>Created</th></tr></thead>
       <tbody>
         {topUps.map((topUp) => (
           <tr key={topUp.id}>
             <td>{topUp.network}</td>
+            <td>{topUp.attemptNumber}</td>
             <td><StatusPill status={topUp.status} /></td>
             <td>{topUp.txHash ? <CopyText value={topUp.txHash} /> : topUp.failureReason ?? "-"}</td>
             <td>{formatDate(topUp.createdAt)}</td>
@@ -1203,11 +1369,12 @@ function GasTopUpsTable({ topUps }: { topUps: GasTopUp[] }) {
 function SweepsTable({ sweeps }: { sweeps: Sweep[] }) {
   return (
     <table>
-      <thead><tr><th>Asset</th><th>Amount</th><th>Status</th><th>Tx</th></tr></thead>
+      <thead><tr><th>Asset</th><th>Attempt</th><th>Amount</th><th>Status</th><th>Tx</th></tr></thead>
       <tbody>
         {sweeps.map((sweep) => (
           <tr key={sweep.id}>
             <td>{sweep.network} {sweep.token}</td>
+            <td>{sweep.attemptNumber}</td>
             <td className="amount">{sweep.amountFormatted}</td>
             <td><StatusPill status={sweep.status} /></td>
             <td>{sweep.txHash ? <CopyText value={sweep.txHash} /> : sweep.failureReason ?? "-"}</td>
@@ -1243,7 +1410,7 @@ function Select({
   return (
     <label>
       {label}
-      <select value={value} onChange={(event) => onChange(event.target.value)} required>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map((item) => <option key={item || "empty"} value={item}>{render(item)}</option>)}
       </select>
     </label>

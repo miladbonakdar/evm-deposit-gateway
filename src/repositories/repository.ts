@@ -9,8 +9,11 @@ import type {
   Merchant,
   MerchantApiKey,
   NetworkSlug,
+  NotificationPreferences,
   OperationalWallet,
   OperationalWalletPurpose,
+  SettlementStatus,
+  SettlementStep,
   Sweep,
   TokenSymbol,
   TokenTransfer,
@@ -43,12 +46,20 @@ export interface UpsertWebhookConfigInput {
   active: boolean;
 }
 
+export interface UpsertNotificationPreferencesInput {
+  merchantId: string;
+  enabledEvents: WebhookEventType[];
+}
+
 export interface UpsertTreasuryWalletInput {
   id: string;
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
   address: ChainAddress;
+  label: string;
+  isDefault?: boolean;
+  operationalWalletId?: string | null;
 }
 
 export interface UpsertOperationalWalletInput {
@@ -70,6 +81,7 @@ export interface CreateDepositAddressInput {
   token: TokenSymbol;
   address: ChainAddress;
   privateKeyEncrypted: string;
+  treasuryWalletId: string;
   callbackUrl: string;
   callbackSecretEncrypted: string;
   expiresAt: Date;
@@ -103,6 +115,7 @@ export interface CreateGasTopUpInput {
   network: NetworkSlug;
   txHash: ChainTxHash | null;
   amountWei: string;
+  attemptNumber: number;
   status: TransactionStatus;
   failureReason?: string | null;
 }
@@ -118,6 +131,7 @@ export interface CreateSweepInput {
   amountRaw: string;
   amountFormatted: string;
   toAddress: ChainAddress;
+  attemptNumber: number;
   status: TransactionStatus;
   failureReason?: string | null;
 }
@@ -170,6 +184,13 @@ export interface ListDepositAddressesFilter {
   limit: number;
 }
 
+export interface ListTreasuryWalletsFilter {
+  merchantId?: string;
+  network?: NetworkSlug;
+  token?: TokenSymbol;
+  limit: number;
+}
+
 export interface ListOperationalWalletsFilter {
   merchantId?: string;
   purpose?: OperationalWalletPurpose;
@@ -183,6 +204,12 @@ export interface ListTransfersFilter {
   merchantId?: string;
   status?: TransferStatus;
   limit: number;
+}
+
+export interface UpdateTransferSettlementInput {
+  settlementStatus: SettlementStatus;
+  settlementStep?: SettlementStep | null;
+  settlementFailureReason?: string | null;
 }
 
 export interface Repository {
@@ -200,9 +227,13 @@ export interface Repository {
   upsertWebhookConfig(input: UpsertWebhookConfigInput): Promise<WebhookConfig>;
   getWebhookConfig(merchantId: string): Promise<WebhookConfig | null>;
   listWebhookConfigs(limit: number): Promise<WebhookConfig[]>;
+  upsertNotificationPreferences(input: UpsertNotificationPreferencesInput): Promise<NotificationPreferences>;
+  getNotificationPreferences(merchantId: string): Promise<NotificationPreferences | null>;
   upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet>;
   getTreasuryWallet(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<TreasuryWallet | null>;
-  listTreasuryWallets(merchantId: string | undefined, limit: number): Promise<TreasuryWallet[]>;
+  getTreasuryWalletById(merchantId: string, id: string): Promise<TreasuryWallet | null>;
+  listTreasuryWallets(filter: ListTreasuryWalletsFilter): Promise<TreasuryWallet[]>;
+  setDefaultTreasuryWallet(merchantId: string, id: string): Promise<TreasuryWallet | null>;
   upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet>;
   getOperationalWallet(id: string): Promise<OperationalWallet | null>;
   getOperationalGasWallet(network: NetworkSlug): Promise<OperationalWallet | null>;
@@ -223,15 +254,16 @@ export interface Repository {
   listTokenTransfers(filter: ListTransfersFilter): Promise<TokenTransfer[]>;
   listTransfersReadyForConfirmation(network: NetworkSlug, token: TokenSymbol, maxBlockNumber: bigint): Promise<TokenTransfer[]>;
   markTransferConfirmed(id: string, confirmations: number, confirmedAt: Date): Promise<TokenTransfer | null>;
+  updateTransferSettlement(id: string, input: UpdateTransferSettlementInput): Promise<TokenTransfer | null>;
 
-  getGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null>;
-  createGasTopUpIfNotExists(input: CreateGasTopUpInput): Promise<{ gasTopUp: GasTopUp; created: boolean }>;
+  getLatestGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null>;
+  createGasTopUp(input: CreateGasTopUpInput): Promise<GasTopUp>;
   listSubmittedGasTopUps(limit: number): Promise<GasTopUp[]>;
   listGasTopUps(limit: number): Promise<GasTopUp[]>;
   updateGasTopUpStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<GasTopUp | null>;
 
-  getSweepByTransfer(transferId: string): Promise<Sweep | null>;
-  createSweepIfNotExists(input: CreateSweepInput): Promise<{ sweep: Sweep; created: boolean }>;
+  getLatestSweepByTransfer(transferId: string): Promise<Sweep | null>;
+  createSweep(input: CreateSweepInput): Promise<Sweep>;
   listSubmittedSweeps(limit: number): Promise<Sweep[]>;
   listSweeps(limit: number): Promise<Sweep[]>;
   updateSweepStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<Sweep | null>;

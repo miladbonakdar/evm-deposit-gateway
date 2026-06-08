@@ -8,11 +8,11 @@
       "gasTopUpWei": "1000000000000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
+          "contractAddress": "0x27cea6eb8a21aae05eb29c91c5ca10592892f584",
           "decimals": 6
         },
         "USDC": {
-          "contractAddress": "",
+          "contractAddress": "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
           "decimals": 6
         }
       }
@@ -25,11 +25,11 @@
       "gasTopUpWei": "1000000000000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
-          "decimals": 18
+          "contractAddress": "0xe37bdc6f09dab6ce6e4ebc4d2e72792994ef3765",
+          "decimals": 6
         },
         "USDC": {
-          "contractAddress": "",
+          "contractAddress": "0x64544969ed7ebf5f083679233325356ebe738930",
           "decimals": 18
         }
       }
@@ -42,11 +42,11 @@
       "gasTopUpWei": "1000000000000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
+          "contractAddress": "0xc29312dcfd763e61f72dc854a829bfa2259a1d92",
           "decimals": 6
         },
         "USDC": {
-          "contractAddress": "",
+          "contractAddress": "0x41e94eb019c0762f9bfcf9fb1e58725bfb0e7582",
           "decimals": 6
         }
       }
@@ -59,11 +59,11 @@
       "gasTopUpWei": "1000000000000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
-          "decimals": 6
+          "contractAddress": "0x3dd1a7a99cfa2554da8b3483e6ed739120fc35cb",
+          "decimals": 8
         },
         "USDC": {
-          "contractAddress": "",
+          "contractAddress": "0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d",
           "decimals": 6
         }
       }
@@ -76,11 +76,11 @@
       "gasTopUpWei": "1000000000000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
-          "decimals": 6
+          "contractAddress": "0xc04d2869665be874881133943523723be5782720",
+          "decimals": 18
         },
         "USDC": {
-          "contractAddress": "",
+          "contractAddress": "0x5fd84259d66cd46123540766be93dfe6d43130d7",
           "decimals": 6
         }
       }
@@ -93,7 +93,58 @@
       "gasTopUpWei": "1000000000000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
+          "contractAddress": "0x915052b4ada5354939272639cdf0246405f78162",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+          "decimals": 6
+        }
+      }
+    },
+    "avalancheFuji": {
+      "confirmations": 6,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "0x144843929df063312a083db6f0a0ff5697abed4a",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "0x5425890298aed601595a70ab815c96711a31bc65",
+          "decimals": 6
+        }
+      }
+    },
+    "lineaSepolia": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "0xf63d68323401584018f5b98e109eb3dee5b77492",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "0xfece4462d57bd51a6a552365a011b95f0e16d9b7",
+          "decimals": 6
+        }
+      }
+    },
+    "scrollSepolia": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "0x03c262b4a2374888c7c70506d248b0bbb2b888ac",
           "decimals": 6
         },
         "USDC": {
@@ -110,7 +161,7 @@
       "gasTopUpWei": "10000000",
       "tokens": {
         "USDT": {
-          "contractAddress": "",
+          "contractAddress": "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf",
           "decimals": 6
         },
         "USDC": {

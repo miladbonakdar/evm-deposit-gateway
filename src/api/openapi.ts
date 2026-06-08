@@ -19,7 +19,7 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
     info: {
       title: "Crypto Deposit API",
       version: "0.1.0",
-      description: "Temporary USDT/USDC deposit addresses for supported EVM networks."
+      description: "Temporary USDT/USDC deposit addresses for supported EVM and TRON networks."
     },
     security: [{ ClientHmac: [] }],
     components: {
@@ -74,13 +74,6 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
           responses: { "200": { description: "API key status" } }
         }
       },
-      "/admin/webhook": {
-        put: {
-          security: [{ AdminBearer: [] }],
-          summary: "Configure fallback owner webhook",
-          responses: { "200": { description: "Webhook configuration" } }
-        }
-      },
       "/admin/treasury-wallets": {
         put: {
           security: [{ AdminBearer: [] }],
@@ -101,6 +94,11 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
                   properties: {
                     network: { type: "string" },
                     token: { type: "string", enum: ["USDT", "USDC"] },
+                    treasuryWalletId: {
+                      type: "string",
+                      format: "uuid",
+                      description: "Optional selectable treasury wallet ID. Defaults to the asset's default treasury wallet."
+                    },
                     callbackUrl: { type: "string", format: "uri" },
                     callbackSecret: {
                       type: "string",
@@ -117,6 +115,17 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
             }
           },
           responses: { "201": { description: "Deposit address with optional QR data" } }
+        }
+      },
+      "/v1/treasury-wallets": {
+        get: {
+          summary: "List selectable treasury wallets",
+          parameters: [
+            { name: "network", in: "query", schema: { type: "string" } },
+            { name: "token", in: "query", schema: { type: "string", enum: ["USDT", "USDC"] } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } }
+          ],
+          responses: { "200": { description: "Selectable treasury wallet list" } }
         }
       },
       "/v1/deposit-addresses/{id}": {

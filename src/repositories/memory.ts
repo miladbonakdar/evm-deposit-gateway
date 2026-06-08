@@ -8,6 +8,7 @@ import type {
   Merchant,
   MerchantApiKey,
   NetworkSlug,
+  NotificationPreferences,
   OperationalWallet,
   OperationalWalletPurpose,
   Sweep,
@@ -33,8 +34,11 @@ import type {
   ListDepositAddressesFilter,
   ListDepositsFilter,
   ListOperationalWalletsFilter,
+  ListTreasuryWalletsFilter,
   ListTransfersFilter,
   Repository,
+  UpdateTransferSettlementInput,
+  UpsertNotificationPreferencesInput,
   UpsertOperationalWalletInput,
   UpsertTreasuryWalletInput,
   UpsertWebhookConfigInput
@@ -71,6 +75,7 @@ export class MemoryRepository implements Repository {
   private readonly apiKeysByPublicKey = new Map<string, string>();
   private readonly nonces = new Set<string>();
   private readonly webhookConfigs = new Map<string, WebhookConfig>();
+  private readonly notificationPreferences = new Map<string, NotificationPreferences>();
   private readonly treasuryWallets = new Map<string, TreasuryWallet>();
   private readonly operationalWallets = new Map<string, OperationalWallet>();
   private readonly operationalWalletsByScope = new Map<string, string>();
@@ -204,34 +209,109 @@ export class MemoryRepository implements Repository {
     );
   }
 
-  async upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet> {
-    const key = `${input.merchantId}:${assetKey(input.network, input.token)}`;
-    const existing = this.treasuryWallets.get(key);
+  async upsertNotificationPreferences(
+    input: UpsertNotificationPreferencesInput
+  ): Promise<NotificationPreferences> {
+    const existing = this.notificationPreferences.get(input.merchantId);
     const timestamp = now();
+    const preferences: NotificationPreferences = {
+      merchantId: input.merchantId,
+      enabledEvents: [...new Set(input.enabledEvents)],
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+    this.notificationPreferences.set(input.merchantId, preferences);
+    return clone(preferences);
+  }
+
+  async getNotificationPreferences(merchantId: string): Promise<NotificationPreferences | null> {
+    return clone(this.notificationPreferences.get(merchantId) ?? null);
+  }
+
+  async upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet> {
+    const existing = [...this.treasuryWallets.values()].find(
+      (wallet) =>
+        wallet.merchantId === input.merchantId &&
+        wallet.network === input.network &&
+        wallet.token === input.token &&
+        wallet.address === input.address
+    );
+    const existingDefault = [...this.treasuryWallets.values()].find(
+      (wallet) =>
+        wallet.merchantId === input.merchantId &&
+        wallet.network === input.network &&
+        wallet.token === input.token &&
+        wallet.isDefault
+    );
+    const shouldBeDefault = input.isDefault === true || !existingDefault;
+    const timestamp = now();
+
+    if (shouldBeDefault) {
+      for (const wallet of this.treasuryWallets.values()) {
+        if (wallet.merchantId === input.merchantId && wallet.network === input.network && wallet.token === input.token) {
+          wallet.isDefault = false;
+          wallet.updatedAt = timestamp;
+        }
+      }
+    }
+
     const wallet: TreasuryWallet = {
       id: existing?.id ?? input.id,
       merchantId: input.merchantId,
       network: input.network,
       token: input.token,
       address: input.address,
+      label: input.label,
+      isDefault: shouldBeDefault ? true : existing?.isDefault ?? false,
+      operationalWalletId: input.operationalWalletId ?? existing?.operationalWalletId ?? null,
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp
     };
-    this.treasuryWallets.set(key, wallet);
+    this.treasuryWallets.set(wallet.id, wallet);
     return clone(wallet);
   }
 
   async getTreasuryWallet(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<TreasuryWallet | null> {
-    return clone(this.treasuryWallets.get(`${merchantId}:${assetKey(network, token)}`) ?? null);
+    const matches = [...this.treasuryWallets.values()].filter(
+      (wallet) => wallet.merchantId === merchantId && wallet.network === network && wallet.token === token
+    );
+    return clone(matches.find((wallet) => wallet.isDefault) ?? matches[0] ?? null);
   }
 
-  async listTreasuryWallets(merchantId: string | undefined, limit: number): Promise<TreasuryWallet[]> {
+  async getTreasuryWalletById(merchantId: string, id: string): Promise<TreasuryWallet | null> {
+    const wallet = this.treasuryWallets.get(id);
+    if (!wallet || wallet.merchantId !== merchantId) {
+      return null;
+    }
+    return clone(wallet);
+  }
+
+  async listTreasuryWallets(filter: ListTreasuryWalletsFilter): Promise<TreasuryWallet[]> {
     return clone(
       [...this.treasuryWallets.values()]
-        .filter((wallet) => !merchantId || wallet.merchantId === merchantId)
-        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
-        .slice(0, limit)
+        .filter((wallet) => !filter.merchantId || wallet.merchantId === filter.merchantId)
+        .filter((wallet) => !filter.network || wallet.network === filter.network)
+        .filter((wallet) => !filter.token || wallet.token === filter.token)
+        .sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || right.updatedAt.getTime() - left.updatedAt.getTime())
+        .slice(0, filter.limit)
     );
+  }
+
+  async setDefaultTreasuryWallet(merchantId: string, id: string): Promise<TreasuryWallet | null> {
+    const wallet = this.treasuryWallets.get(id);
+    if (!wallet || wallet.merchantId !== merchantId) {
+      return null;
+    }
+
+    const timestamp = now();
+    for (const candidate of this.treasuryWallets.values()) {
+      if (candidate.merchantId === wallet.merchantId && candidate.network === wallet.network && candidate.token === wallet.token) {
+        candidate.isDefault = candidate.id === wallet.id;
+        candidate.updatedAt = timestamp;
+      }
+    }
+
+    return clone(this.treasuryWallets.get(id) ?? null);
   }
 
   async upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet> {
@@ -288,6 +368,7 @@ export class MemoryRepository implements Repository {
       token: input.token,
       address: input.address,
       privateKeyEncrypted: input.privateKeyEncrypted,
+      treasuryWalletId: input.treasuryWalletId,
       callbackUrl: input.callbackUrl,
       callbackSecretEncrypted: input.callbackSecretEncrypted,
       status: "active",
@@ -362,6 +443,10 @@ export class MemoryRepository implements Repository {
 
     const transfer: TokenTransfer = {
       ...input,
+      settlementStatus: "pending",
+      settlementStep: null,
+      settlementFailureReason: null,
+      settlementUpdatedAt: now(),
       detectedAt: now(),
       confirmedAt: input.status === "confirmed" ? now() : null
     };
@@ -429,17 +514,29 @@ export class MemoryRepository implements Repository {
     return clone(transfer);
   }
 
-  async getGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null> {
-    const id = this.gasTopUpsByTransfer.get(transferId);
-    return clone(id ? (this.gasTopUps.get(id) ?? null) : null);
+  async updateTransferSettlement(
+    id: string,
+    input: UpdateTransferSettlementInput
+  ): Promise<TokenTransfer | null> {
+    const transfer = this.tokenTransfers.get(id);
+    if (!transfer) {
+      return null;
+    }
+    transfer.settlementStatus = input.settlementStatus;
+    transfer.settlementStep = input.settlementStep ?? null;
+    transfer.settlementFailureReason = input.settlementFailureReason ?? null;
+    transfer.settlementUpdatedAt = now();
+    return clone(transfer);
   }
 
-  async createGasTopUpIfNotExists(input: CreateGasTopUpInput): Promise<{ gasTopUp: GasTopUp; created: boolean }> {
-    const existingId = this.gasTopUpsByTransfer.get(input.transferId);
-    if (existingId) {
-      return { gasTopUp: clone(this.gasTopUps.get(existingId) as GasTopUp), created: false };
-    }
+  async getLatestGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null> {
+    const latest = [...this.gasTopUps.values()]
+      .filter((topUp) => topUp.transferId === transferId)
+      .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+    return clone(latest ?? null);
+  }
 
+  async createGasTopUp(input: CreateGasTopUpInput): Promise<GasTopUp> {
     const gasTopUp: GasTopUp = {
       ...input,
       failureReason: input.failureReason ?? null,
@@ -448,17 +545,22 @@ export class MemoryRepository implements Repository {
     };
     this.gasTopUps.set(gasTopUp.id, gasTopUp);
     this.gasTopUpsByTransfer.set(gasTopUp.transferId, gasTopUp.id);
-    return { gasTopUp: clone(gasTopUp), created: true };
+    return clone(gasTopUp);
   }
 
   async listSubmittedGasTopUps(limit: number): Promise<GasTopUp[]> {
-    return clone([...this.gasTopUps.values()].filter((topUp) => topUp.status === "submitted").slice(0, limit));
+    return clone(
+      [...this.gasTopUps.values()]
+        .filter((topUp) => topUp.status === "submitted")
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+        .slice(0, limit)
+    );
   }
 
   async listGasTopUps(limit: number): Promise<GasTopUp[]> {
     return clone(
       [...this.gasTopUps.values()]
-        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime() || right.attemptNumber - left.attemptNumber)
         .slice(0, limit)
     );
   }
@@ -480,17 +582,14 @@ export class MemoryRepository implements Repository {
     return clone(topUp);
   }
 
-  async getSweepByTransfer(transferId: string): Promise<Sweep | null> {
-    const id = this.sweepsByTransfer.get(transferId);
-    return clone(id ? (this.sweeps.get(id) ?? null) : null);
+  async getLatestSweepByTransfer(transferId: string): Promise<Sweep | null> {
+    const latest = [...this.sweeps.values()]
+      .filter((sweep) => sweep.transferId === transferId)
+      .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+    return clone(latest ?? null);
   }
 
-  async createSweepIfNotExists(input: CreateSweepInput): Promise<{ sweep: Sweep; created: boolean }> {
-    const existingId = this.sweepsByTransfer.get(input.transferId);
-    if (existingId) {
-      return { sweep: clone(this.sweeps.get(existingId) as Sweep), created: false };
-    }
-
+  async createSweep(input: CreateSweepInput): Promise<Sweep> {
     const sweep: Sweep = {
       ...input,
       failureReason: input.failureReason ?? null,
@@ -499,17 +598,22 @@ export class MemoryRepository implements Repository {
     };
     this.sweeps.set(sweep.id, sweep);
     this.sweepsByTransfer.set(sweep.transferId, sweep.id);
-    return { sweep: clone(sweep), created: true };
+    return clone(sweep);
   }
 
   async listSubmittedSweeps(limit: number): Promise<Sweep[]> {
-    return clone([...this.sweeps.values()].filter((sweep) => sweep.status === "submitted").slice(0, limit));
+    return clone(
+      [...this.sweeps.values()]
+        .filter((sweep) => sweep.status === "submitted")
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+        .slice(0, limit)
+    );
   }
 
   async listSweeps(limit: number): Promise<Sweep[]> {
     return clone(
       [...this.sweeps.values()]
-        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime() || right.attemptNumber - left.attemptNumber)
         .slice(0, limit)
     );
   }

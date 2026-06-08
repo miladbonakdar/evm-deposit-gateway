@@ -24,6 +24,11 @@ export class DefaultWebhookService implements WebhookService {
     data: Record<string, unknown>,
     options: { depositAddressId?: string } = {}
   ): Promise<void> {
+    const preferences = await this.repo.getNotificationPreferences(merchantId);
+    if (preferences && !preferences.enabledEvents.includes(type)) {
+      return;
+    }
+
     const target = await this.resolveCallbackTarget(merchantId, options.depositAddressId);
 
     if (!target) {

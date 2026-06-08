@@ -106,7 +106,10 @@ export class MerchantService {
       merchantId,
       network,
       token,
-      address
+      address,
+      label: `${network} ${token} treasury`,
+      isDefault: true,
+      operationalWalletId: null
     });
 
     return {
@@ -115,6 +118,8 @@ export class MerchantService {
       network,
       token,
       address: wallet.address,
+      label: wallet.label,
+      isDefault: wallet.isDefault,
       updatedAt: wallet.updatedAt.toISOString()
     };
   }

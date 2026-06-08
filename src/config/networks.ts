@@ -4,15 +4,18 @@ import { getAddress, isAddress, type Chain } from "viem";
 import {
   arbitrum,
   arbitrumSepolia,
+  avalancheFuji,
   base,
   baseSepolia,
   bsc,
   bscTestnet,
+  lineaSepolia,
   mainnet,
   optimism,
   optimismSepolia,
   polygon,
   polygonAmoy,
+  scrollSepolia,
   sepolia
 } from "viem/chains";
 import { TronWeb } from "tronweb";
@@ -58,7 +61,10 @@ const chainBySlug: Partial<Record<NetworkSlug, Chain>> = {
   polygonAmoy,
   arbitrumSepolia,
   optimismSepolia,
-  baseSepolia
+  baseSepolia,
+  avalancheFuji,
+  lineaSepolia,
+  scrollSepolia
 };
 
 const kindBySlug = {
@@ -74,6 +80,9 @@ const kindBySlug = {
   arbitrumSepolia: "evm",
   optimismSepolia: "evm",
   baseSepolia: "evm",
+  avalancheFuji: "evm",
+  lineaSepolia: "evm",
+  scrollSepolia: "evm",
   tron: "tron",
   nile: "tron"
 } satisfies Record<NetworkSlug, NetworkKind>;
@@ -91,6 +100,9 @@ const envSuffixBySlug = {
   arbitrumSepolia: "ARBITRUM_SEPOLIA",
   optimismSepolia: "OPTIMISM_SEPOLIA",
   baseSepolia: "BASE_SEPOLIA",
+  avalancheFuji: "AVALANCHE_FUJI",
+  lineaSepolia: "LINEA_SEPOLIA",
+  scrollSepolia: "SCROLL_SEPOLIA",
   tron: "TRON",
   nile: "NILE"
 } satisfies Record<NetworkSlug, string>;

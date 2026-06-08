@@ -53,4 +53,19 @@ describe("webhook delivery", () => {
     expect(pending[0]?.attempts).toBe(1);
     expect(pending[0]?.lastError).toBe("Webhook returned HTTP 500");
   });
+
+  it("skips callback events disabled by notification preferences", async () => {
+    const { repo, config, merchant } = await createRepoWithWebhook();
+    const enqueue = new DefaultWebhookService(repo, config.encryptor);
+    await repo.upsertNotificationPreferences({
+      merchantId: merchant.id,
+      enabledEvents: ["deposit.confirmed"]
+    });
+
+    await enqueue.enqueueMerchantEvent(merchant.id, "wallet.created", { ok: false });
+    await enqueue.enqueueMerchantEvent(merchant.id, "deposit.confirmed", { ok: true });
+
+    const events = await repo.listDueWebhookEvents(new Date(), 10);
+    expect(events.map((event) => event.type)).toEqual(["deposit.confirmed"]);
+  });
 });

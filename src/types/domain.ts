@@ -11,6 +11,9 @@ export const networkSlugs = [
   "arbitrumSepolia",
   "optimismSepolia",
   "baseSepolia",
+  "avalancheFuji",
+  "lineaSepolia",
+  "scrollSepolia",
   "tron",
   "nile"
 ] as const;
@@ -25,22 +28,26 @@ export type ApiKeyStatus = "active" | "revoked";
 export type DepositAddressStatus = "active" | "expired";
 export type TransferStatus = "detected" | "confirmed" | "late";
 export type TransactionStatus = "submitted" | "confirmed" | "failed";
+export type SettlementStatus = "pending" | "submitted" | "settled";
+export type SettlementStep = "gas_top_up" | "sweep";
 export type WebhookStatus = "pending" | "sent" | "failed";
 export type OperationalWalletPurpose = "gas" | "treasury";
 export type OperationalWalletStatus = "active" | "disabled";
 export type WalletTransactionAsset = TokenSymbol | "NATIVE";
-export type WebhookEventType =
-  | "wallet.created"
-  | "wallet.expired"
-  | "transfer.detected"
-  | "deposit.confirmed"
-  | "deposit.late_detected"
-  | "gas.topup.submitted"
-  | "gas.topup.confirmed"
-  | "gas.topup.failed"
-  | "sweep.submitted"
-  | "sweep.confirmed"
-  | "sweep.failed";
+export const webhookEventTypes = [
+  "wallet.created",
+  "wallet.expired",
+  "transfer.detected",
+  "deposit.confirmed",
+  "deposit.late_detected",
+  "gas.topup.submitted",
+  "gas.topup.confirmed",
+  "gas.topup.failed",
+  "sweep.submitted",
+  "sweep.confirmed",
+  "sweep.failed"
+] as const;
+export type WebhookEventType = (typeof webhookEventTypes)[number];
 
 export interface Merchant {
   id: string;
@@ -69,12 +76,22 @@ export interface WebhookConfig {
   updatedAt: Date;
 }
 
+export interface NotificationPreferences {
+  merchantId: string;
+  enabledEvents: WebhookEventType[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface TreasuryWallet {
   id: string;
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
   address: ChainAddress;
+  label: string;
+  isDefault: boolean;
+  operationalWalletId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -101,6 +118,7 @@ export interface DepositAddress {
   token: TokenSymbol;
   address: ChainAddress;
   privateKeyEncrypted: string;
+  treasuryWalletId: string | null;
   callbackUrl: string | null;
   callbackSecretEncrypted: string | null;
   status: DepositAddressStatus;
@@ -134,6 +152,10 @@ export interface TokenTransfer {
   blockHash: ChainTxHash | null;
   confirmations: number;
   status: TransferStatus;
+  settlementStatus: SettlementStatus;
+  settlementStep: SettlementStep | null;
+  settlementFailureReason: string | null;
+  settlementUpdatedAt: Date;
   detectedAt: Date;
   confirmedAt: Date | null;
 }
@@ -146,6 +168,7 @@ export interface GasTopUp {
   network: NetworkSlug;
   txHash: ChainTxHash | null;
   amountWei: string;
+  attemptNumber: number;
   status: TransactionStatus;
   failureReason: string | null;
   createdAt: Date;
@@ -163,6 +186,7 @@ export interface Sweep {
   amountRaw: string;
   amountFormatted: string;
   toAddress: ChainAddress;
+  attemptNumber: number;
   status: TransactionStatus;
   failureReason: string | null;
   createdAt: Date;

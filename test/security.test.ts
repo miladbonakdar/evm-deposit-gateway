@@ -82,4 +82,43 @@ describe("security utilities", () => {
     expect(networks.nile?.tokens.USDT?.contractAddress).toBe(testTronTokenAddress);
     expect(networks.nile?.minGasWei).toBe(5_000_000n);
   });
+
+  it("loads expanded testnet USDT network configuration", () => {
+    const networks = loadSupportedNetworks({
+      RPC_URL_AVALANCHE_FUJI: "https://api.avax-test.network/ext/bc/C/rpc",
+      RPC_URL_LINEA_SEPOLIA: "https://rpc.sepolia.linea.build",
+      RPC_URL_SCROLL_SEPOLIA: "https://sepolia-rpc.scroll.io"
+    }, {
+      networks: {
+        avalancheFuji: {
+          tokens: {
+            USDT: {
+              contractAddress: "0x144843929df063312a083db6f0a0ff5697abed4a",
+              decimals: 6
+            }
+          }
+        },
+        lineaSepolia: {
+          tokens: {
+            USDT: {
+              contractAddress: "0xf63d68323401584018f5b98e109eb3dee5b77492",
+              decimals: 6
+            }
+          }
+        },
+        scrollSepolia: {
+          tokens: {
+            USDT: {
+              contractAddress: "0x03c262b4a2374888c7c70506d248b0bbb2b888ac",
+              decimals: 6
+            }
+          }
+        }
+      }
+    });
+
+    expect(networks.avalancheFuji?.chainId).toBe(43113);
+    expect(networks.lineaSepolia?.tokens.USDT?.decimals).toBe(6);
+    expect(networks.scrollSepolia?.tokens.USDT?.contractAddress).toBe("0x03c262b4a2374888c7c70506d248b0bbb2b888ac");
+  });
 });

@@ -3,6 +3,7 @@ import type { NetworkConfig, TokenConfig } from "../src/config/networks.js";
 import { MemoryRepository } from "../src/repositories/memory.js";
 import { DepositService } from "../src/services/deposit-service.js";
 import { MerchantService } from "../src/services/merchant-service.js";
+import { SettlementService } from "../src/services/settlement-service.js";
 import { DefaultWebhookService } from "../src/services/webhook-service.js";
 import { DepositWorker } from "../src/worker/deposit-worker.js";
 import type { ChainProvider, TokenTransferLog, TransactionReceiptSummary } from "../src/worker/chain-provider.js";
@@ -18,6 +19,7 @@ class MockChainProvider implements ChainProvider {
   nativeTransfers: { to: string; value: bigint }[] = [];
   tokenTransfers: { to: string; value: bigint }[] = [];
   receipts = new Map<string, TransactionReceiptSummary>();
+  failTokenTransfer = false;
 
   async getLatestBlockNumber(): Promise<bigint> {
     return this.latestBlock;
@@ -59,6 +61,9 @@ class MockChainProvider implements ChainProvider {
     to: string,
     value: bigint
   ): Promise<string> {
+    if (this.failTokenTransfer) {
+      throw new Error("mock token transfer failed");
+    }
     this.tokenTransfers.push({ to, value });
     const hash = `0x${"2".repeat(64)}`;
     this.receipts.set(hash, { status: "success", blockNumber: this.latestBlock });
@@ -70,8 +75,7 @@ class MockChainProvider implements ChainProvider {
   }
 }
 
-async function setupWorker(ttlSeconds = 3600) {
-  const config = createTestConfig();
+async function setupWorker(ttlSeconds = 3600, config = createTestConfig()) {
   const repo = new MemoryRepository();
   const webhooks = new DefaultWebhookService(repo, config.encryptor);
   const merchantService = new MerchantService(repo, config.encryptor, config.networks);
@@ -102,7 +106,7 @@ async function setupWorker(ttlSeconds = 3600) {
     webhooks
   });
 
-  return { repo, merchant, depositAddress, evm, worker };
+  return { config, repo, merchant, depositAddress, evm, worker };
 }
 
 describe("deposit worker", () => {
@@ -117,7 +121,7 @@ describe("deposit worker", () => {
   });
 
   it("detects confirmed ERC-20 deposits and sweeps them to treasury", async () => {
-    const { repo, merchant, depositAddress, evm, worker } = await setupWorker();
+    const { config, repo, merchant, depositAddress, evm, worker } = await setupWorker();
     evm.logs.push({
       network: "ethereum",
       token: "USDT",
@@ -144,7 +148,7 @@ describe("deposit worker", () => {
   });
 
   it("tops up gas before sweeping when the deposit wallet lacks native gas", async () => {
-    const { repo, merchant, depositAddress, evm, worker } = await setupWorker();
+    const { config, repo, merchant, depositAddress, evm, worker } = await setupWorker();
     evm.nativeBalance = 0n;
     evm.logs.push({
       network: "ethereum",
@@ -236,6 +240,116 @@ describe("deposit worker", () => {
     await worker.runOnce();
 
     expect(evm.nativeTransfers).toEqual([{ to: depositAddress.address, value: 5_000_000_000_000_000n }]);
+  });
+
+  it("keeps failed gas top-ups pending until settlement is retried", async () => {
+    const config = createTestConfig();
+    if (config.networks.ethereum) {
+      config.networks.ethereum.gasWalletPrivateKey = undefined;
+    }
+    const { repo, merchant, depositAddress, evm, worker } = await setupWorker(3600, config);
+    evm.nativeBalance = 0n;
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"9".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"7".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: depositAddress.address,
+      value: 10_000_000n
+    });
+
+    await worker.runOnce();
+
+    const transfer = (await repo.listTransfersForMerchant(merchant.id, { limit: 10 }))[0];
+    if (!transfer) {
+      throw new Error("Expected transfer");
+    }
+    expect(transfer.settlementStatus).toBe("pending");
+    expect(transfer.settlementStep).toBe("gas_top_up");
+    expect((await repo.listGasTopUps(10))).toEqual([
+      expect.objectContaining({ attemptNumber: 1, status: "failed" })
+    ]);
+
+    await repo.upsertOperationalWallet({
+      id: newId(),
+      scopeKey: operationalWalletScopeKey("gas", null, "ethereum", null),
+      merchantId: null,
+      purpose: "gas",
+      network: "ethereum",
+      token: null,
+      address: "0x0000000000000000000000000000000000000aaa",
+      privateKeyEncrypted: config.encryptor.encryptString(`0x${"3".repeat(64)}`),
+      label: "Stored gas wallet"
+    });
+
+    await worker.runOnce();
+    expect(evm.nativeTransfers).toHaveLength(0);
+    expect(await repo.listGasTopUps(10)).toHaveLength(1);
+
+    const settlement = new SettlementService({
+      repo,
+      networks: config.networks,
+      encryptor: config.encryptor,
+      chainProvider: evm,
+      webhooks: new DefaultWebhookService(repo, config.encryptor)
+    });
+    await settlement.ensureSettlement(transfer, { forceRetry: true });
+
+    expect(evm.nativeTransfers).toEqual([{ to: depositAddress.address, value: 5_000_000_000_000_000n }]);
+    expect(await repo.listGasTopUps(10)).toEqual([
+      expect.objectContaining({ attemptNumber: 2, status: "submitted" }),
+      expect.objectContaining({ attemptNumber: 1, status: "failed" })
+    ]);
+  });
+
+  it("preserves failed sweep attempts and confirms a forced retry", async () => {
+    const { config, repo, merchant, depositAddress, evm, worker } = await setupWorker();
+    evm.failTokenTransfer = true;
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"6".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"5".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: depositAddress.address,
+      value: 10_000_000n
+    });
+
+    await worker.runOnce();
+
+    const transfer = (await repo.listTransfersForMerchant(merchant.id, { limit: 10 }))[0];
+    if (!transfer) {
+      throw new Error("Expected transfer");
+    }
+    expect((await repo.listSweeps(10))).toEqual([
+      expect.objectContaining({ attemptNumber: 1, status: "failed" })
+    ]);
+    expect((await repo.getTokenTransfer(transfer.id))?.settlementStep).toBe("sweep");
+
+    evm.failTokenTransfer = false;
+    await worker.runOnce();
+    expect(await repo.listSweeps(10)).toHaveLength(1);
+
+    const settlement = new SettlementService({
+      repo,
+      networks: config.networks,
+      encryptor: config.encryptor,
+      chainProvider: evm,
+      webhooks: new DefaultWebhookService(repo, config.encryptor)
+    });
+    await settlement.ensureSettlement(transfer, { forceRetry: true });
+    await worker.runOnce();
+
+    expect(await repo.listSweeps(10)).toEqual([
+      expect.objectContaining({ attemptNumber: 2, status: "confirmed" }),
+      expect.objectContaining({ attemptNumber: 1, status: "failed" })
+    ]);
+    expect((await repo.getTokenTransfer(transfer.id))?.settlementStatus).toBe("settled");
   });
 
   it("confirms dashboard wallet transactions", async () => {

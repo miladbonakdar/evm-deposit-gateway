@@ -10,6 +10,7 @@ import { sha256Hex } from "../security/hmac.js";
 import { DashboardService } from "../services/dashboard-service.js";
 import { DepositService } from "../services/deposit-service.js";
 import { MerchantService } from "../services/merchant-service.js";
+import { SettlementService } from "../services/settlement-service.js";
 import { DefaultWebhookService } from "../services/webhook-service.js";
 import type { Repository } from "../repositories/repository.js";
 import type { ChainProvider } from "../worker/chain-provider.js";
@@ -34,6 +35,8 @@ import {
   dashboardLoginSchema,
   generateGasWalletSchema,
   generateTreasuryWalletSchema,
+  listTreasuryWalletsQuerySchema,
+  notificationPreferencesSchema,
   listDepositsQuerySchema,
   registerTreasuryWalletSchema
 } from "./schemas.js";
@@ -50,7 +53,21 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   const merchantService = new MerchantService(repo, config.encryptor, config.networks);
   const depositService = new DepositService(repo, config.encryptor, config.networks, webhookService);
   const chainProvider = suppliedChainProvider ?? new MultiChainProvider(new ViemEvmProvider(), new TronProvider());
-  const dashboardService = new DashboardService(repo, config.encryptor, config.networks, chainProvider, config.ownerAccountId);
+  const settlementService = new SettlementService({
+    repo,
+    networks: config.networks,
+    encryptor: config.encryptor,
+    chainProvider,
+    webhooks: webhookService
+  });
+  const dashboardService = new DashboardService(
+    repo,
+    config.encryptor,
+    config.networks,
+    chainProvider,
+    settlementService,
+    config.ownerAccountId
+  );
   const getOwnerAccount = () => merchantService.getOrCreateOwnerAccount(config.ownerAccountId, config.ownerAccountName);
 
   app.onError((error, c) => {
@@ -137,10 +154,10 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     return c.json(result, 201);
   });
 
-  app.put("/dashboard/api/webhook", async (c) => {
+  app.put("/dashboard/api/notification-preferences", async (c) => {
     const owner = await getOwnerAccount();
-    const body = await parseJson(c, configureWebhookSchema);
-    return c.json(await merchantService.configureWebhook(owner.id, body.url, body.secret, body.active));
+    const body = await parseJson(c, notificationPreferencesSchema);
+    return c.json(await dashboardService.updateNotificationPreferences(owner.id, body.enabledEvents));
   });
 
   app.post("/dashboard/api/wallets/gas", async (c) => {
@@ -158,6 +175,16 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     const owner = await getOwnerAccount();
     const body = await parseJson(c, registerTreasuryWalletSchema);
     return c.json(await dashboardService.registerTreasuryWallet({ ...body, merchantId: owner.id }));
+  });
+
+  app.post("/dashboard/api/treasury-wallets/:treasuryWalletId/default", async (c) => {
+    await getOwnerAccount();
+    return c.json(await dashboardService.setDefaultTreasuryWallet(c.req.param("treasuryWalletId")));
+  });
+
+  app.post("/dashboard/api/deposits/:transferId/retry-settlement", async (c) => {
+    await getOwnerAccount();
+    return c.json(await dashboardService.retryDepositSettlement(c.req.param("transferId")));
   });
 
   app.post("/dashboard/api/wallet-transactions", async (c) => {
@@ -253,6 +280,7 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
       merchantId: auth.merchant.id,
       network: body.network,
       token: body.token,
+      treasuryWalletId: body.treasuryWalletId,
       callbackUrl: body.callbackUrl,
       callbackSecret: body.callbackSecret,
       ttlSeconds: body.ttlSeconds,
@@ -277,6 +305,16 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
       limit: c.req.query("limit")
     });
     return c.json(await depositService.listDeposits(auth.merchant.id, query.status, query.limit));
+  });
+
+  app.get("/v1/treasury-wallets", async (c) => {
+    const auth = c.get("auth");
+    const query = listTreasuryWalletsQuerySchema.parse({
+      network: c.req.query("network"),
+      token: c.req.query("token"),
+      limit: c.req.query("limit")
+    });
+    return c.json(await depositService.listTreasuryWallets(auth.merchant.id, query.network, query.token, query.limit));
   });
 
   app.get("/dashboard/assets/*", (c) => serveDashboardFile(c));
