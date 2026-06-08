@@ -17,7 +17,7 @@ export class WebhookDeliveryService {
     private readonly repo: Repository,
     private readonly config: Pick<
       AppConfig,
-      "encryptor" | "webhookTimeoutMs" | "webhookMaxAttempts" | "webhookBaseRetrySeconds"
+      "encryptor" | "webhookTimeoutMs" | "webhookMaxAttempts" | "webhookBaseRetrySeconds" | "webhookMaxRetryDelaySeconds"
     >,
     private readonly http: WebhookHttpClient = { fetch }
   ) {}
@@ -74,7 +74,10 @@ export class WebhookDeliveryService {
 
   private async scheduleRetry(id: string, attempts: number, error: string, responseStatus: number | null): Promise<void> {
     const permanentlyFailed = attempts >= this.config.webhookMaxAttempts;
-    const delaySeconds = this.config.webhookBaseRetrySeconds * 2 ** Math.max(0, attempts - 1);
+    const delaySeconds = Math.min(
+      this.config.webhookBaseRetrySeconds * 2 ** Math.max(0, attempts - 1),
+      this.config.webhookMaxRetryDelaySeconds
+    );
     const nextAttemptAt = new Date(Date.now() + delaySeconds * 1000);
 
     await this.repo.markWebhookRetry(

@@ -70,6 +70,8 @@ export interface CreateDepositAddressInput {
   token: TokenSymbol;
   address: ChainAddress;
   privateKeyEncrypted: string;
+  callbackUrl: string;
+  callbackSecretEncrypted: string;
   expiresAt: Date;
   externalId: string | null;
   metadata: unknown;
@@ -139,6 +141,7 @@ export interface CreateWalletTransactionInput {
 export interface CreateWebhookEventInput {
   id: string;
   merchantId: string;
+  depositAddressId?: string | null;
   type: WebhookEventType;
   url: string;
   secretEncrypted: string;

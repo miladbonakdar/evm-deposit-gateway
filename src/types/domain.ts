@@ -101,6 +101,8 @@ export interface DepositAddress {
   token: TokenSymbol;
   address: ChainAddress;
   privateKeyEncrypted: string;
+  callbackUrl: string | null;
+  callbackSecretEncrypted: string | null;
   status: DepositAddressStatus;
   expiresAt: Date;
   externalId: string | null;
@@ -188,6 +190,7 @@ export interface WalletTransaction {
 export interface WebhookEvent {
   id: string;
   merchantId: string;
+  depositAddressId: string | null;
   type: WebhookEventType;
   url: string;
   secretEncrypted: string;

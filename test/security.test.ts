@@ -62,9 +62,18 @@ describe("security utilities", () => {
   it("normalizes TRON addresses and TRON token configuration", () => {
     const tronHexAddress = TronWeb.address.toHex(testTronTokenAddress);
     const networks = loadSupportedNetworks({
-      RPC_URL_NILE: "https://api.nileex.io",
-      USDT_CONTRACT_NILE: `0x${tronHexAddress}`,
-      USDT_DECIMALS_NILE: "6"
+      RPC_URL_NILE: "https://api.nileex.io"
+    }, {
+      networks: {
+        nile: {
+          tokens: {
+            USDT: {
+              contractAddress: `0x${tronHexAddress}`,
+              decimals: 6
+            }
+          }
+        }
+      }
     });
 
     expect(normalizeTronAddress(tronHexAddress)).toBe(testTronTokenAddress);

@@ -4,7 +4,22 @@ This document is the integration contract for outgoing webhooks.
 
 ## Delivery
 
-Webhook requests are `POST` requests to the merchant webhook URL.
+Webhook requests are `POST` requests to the callback URL supplied for that specific deposit address.
+
+Your application creates the callback route with `POST /v1/deposit-addresses`:
+
+```json
+{
+  "network": "ethereum",
+  "token": "USDT",
+  "callbackUrl": "https://app.example/webhooks/crypto/invoice-123",
+  "callbackSecret": "use-a-long-random-per-deposit-secret",
+  "ttlSeconds": 3600,
+  "externalId": "invoice-123"
+}
+```
+
+`callbackSecret` is stored encrypted and is never returned. All lifecycle events for this deposit address use this callback URL and secret. The owner webhook configuration remains a fallback for old deposit rows or events that are not tied to a deposit address.
 
 Headers:
 
@@ -25,7 +40,7 @@ timestamp.raw_json_body
 Signature algorithm:
 
 ```text
-HMAC-SHA256(webhookSecret, signaturePayload)
+HMAC-SHA256(callbackSecret, signaturePayload)
 ```
 
 Receivers should reject stale timestamps and use `X-Webhook-Id` or body `id` for idempotency.
@@ -93,6 +108,7 @@ interface DepositAddressPayload {
   network: NetworkSlug;
   token: TokenSymbol;
   address: string;
+  callbackUrl: string | null;
   status: DepositAddressStatus;
   expiresAt: string;
   externalId: string | null;
@@ -312,10 +328,13 @@ Webhook events are stored in an outbox and retried with exponential backoff.
 Config:
 
 - `WEBHOOK_TIMEOUT_MS`
-- `WEBHOOK_MAX_ATTEMPTS`
-- `WEBHOOK_BASE_RETRY_SECONDS`
+- `WEBHOOK_MAX_ATTEMPTS`, default `5`
+- `WEBHOOK_BASE_RETRY_SECONDS`, default `5`
+- `WEBHOOK_MAX_RETRY_DELAY_SECONDS`, default `86400`
 
-Any 2xx response marks the event sent. Non-2xx responses and network errors are retried until max attempts, then marked failed internally.
+Every event tracks `status`, `attempts`, `nextAttemptAt`, `lastError`, `responseStatus`, and `sentAt`. Events tied to deposits also store `depositAddressId`.
+
+Any 2xx response marks the event `sent`. Non-2xx responses, timeouts, and network errors are retried until max attempts, then marked `failed` internally.
 
 ## Receiver Requirements
 

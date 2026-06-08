@@ -211,12 +211,12 @@ interface HistoryResponse<T extends Record<string, unknown>> {
   items: T[];
 }
 
-type Tab = "overview" | "merchants" | "wallets" | "deposits" | "transfers" | "webhooks";
+type Tab = "overview" | "settings" | "wallets" | "deposits" | "transfers" | "webhooks";
 
 const tokenStorageKey = "crypto-dashboard-token";
 const tabs: Array<{ id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
   { id: "overview", label: "Overview", icon: ShieldCheck },
-  { id: "merchants", label: "Merchants", icon: KeyRound },
+  { id: "settings", label: "Settings", icon: KeyRound },
   { id: "wallets", label: "Wallets", icon: Wallet },
   { id: "deposits", label: "Deposits", icon: Coins },
   { id: "transfers", label: "Transfers", icon: ArrowRightLeft },
@@ -419,8 +419,8 @@ function DashboardView({
   switch (tab) {
     case "overview":
       return <OverviewPanel overview={overview} data={data} />;
-    case "merchants":
-      return <MerchantsPanel data={data} token={token} mutate={mutate} />;
+    case "settings":
+      return <SettingsPanel data={data} token={token} mutate={mutate} />;
     case "wallets":
       return <WalletsPanel data={data} token={token} mutate={mutate} />;
     case "deposits":
@@ -434,7 +434,7 @@ function DashboardView({
 
 function OverviewPanel({ overview, data }: { overview: Overview; data: DashboardData }) {
   const statItems = [
-    ["Merchants", overview.stats.merchants ?? 0],
+    ["Owner account", overview.stats.merchants ?? 0],
     ["Active temp wallets", overview.stats.activeDepositAddresses ?? 0],
     ["Confirmed deposits", overview.stats.confirmedDeposits ?? 0],
     ["Pending webhooks", overview.stats.pendingWebhooks ?? 0],
@@ -489,7 +489,7 @@ function OverviewPanel({ overview, data }: { overview: Overview; data: Dashboard
       </div>
       <div className="split-grid">
         <Panel title="Recent deposits">
-          <DepositsTable deposits={overview.recentDeposits} merchants={data.merchants} compact />
+          <DepositsTable deposits={overview.recentDeposits} compact />
         </Panel>
         <Panel title="Wallet transactions">
           <WalletTransactionsTable transactions={overview.recentWalletTransactions} wallets={data.operationalWallets} merchants={data.merchants} compact />
@@ -519,7 +519,7 @@ function PiePanel({ title, data }: { title: string; data: Array<{ name: string; 
   );
 }
 
-function MerchantsPanel({
+function SettingsPanel({
   data,
   token,
   mutate
@@ -528,23 +528,15 @@ function MerchantsPanel({
   token: string;
   mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
-  const [name, setName] = useState("");
-  const [selectedMerchantId, setSelectedMerchantId] = useState(data.merchants[0]?.id ?? "");
   const [apiKeyResult, setApiKeyResult] = useState<{ apiKey: string; apiSecret: string } | null>(null);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [webhookActive, setWebhookActive] = useState(true);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    await mutate(apiPost("/dashboard/api/merchants", token, { name }), "Merchant created");
-    setName("");
-  }
-
   async function createApiKey(event: FormEvent) {
     event.preventDefault();
     const result = await mutate<{ apiKey: string; apiSecret: string }>(
-      apiPost(`/dashboard/api/merchants/${selectedMerchantId}/api-keys`, token, {}),
+      apiPost("/dashboard/api/api-keys", token, {}),
       "API key created"
     );
     if (result) {
@@ -555,7 +547,7 @@ function MerchantsPanel({
   async function configureWebhook(event: FormEvent) {
     event.preventDefault();
     await mutate(
-      apiPut(`/dashboard/api/merchants/${selectedMerchantId}/webhook`, token, {
+      apiPut("/dashboard/api/webhook", token, {
         url: webhookUrl,
         secret: webhookSecret || undefined,
         active: webhookActive
@@ -567,19 +559,23 @@ function MerchantsPanel({
 
   return (
     <section className="stack">
-      <Panel title="Create merchant">
-        <form className="inline-form" onSubmit={submit}>
-          <label>
-            Name
-            <input value={name} onChange={(event) => setName(event.target.value)} required />
-          </label>
-          <button className="primary"><Plus size={16} />Create</button>
-        </form>
+      <Panel title="Owner account">
+        <table>
+          <thead><tr><th>Name</th><th>Status</th><th>ID</th></tr></thead>
+          <tbody>
+            {data.merchants.map((merchant) => (
+              <tr key={merchant.id}>
+                <td>{merchant.name}</td>
+                <td><StatusPill status={merchant.status as Status} /></td>
+                <td><CopyText value={merchant.id} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </Panel>
       <div className="split-grid">
         <Panel title="Create API key">
           <form className="form-grid" onSubmit={createApiKey}>
-            <Select label="Merchant" value={selectedMerchantId} onChange={setSelectedMerchantId} options={data.merchants.map((item) => item.id)} render={merchantName(data.merchants)} />
             <button className="primary"><KeyRound size={16} />Create key</button>
           </form>
           {apiKeyResult ? (
@@ -591,7 +587,6 @@ function MerchantsPanel({
         </Panel>
         <Panel title="Configure webhook">
           <form className="form-grid" onSubmit={configureWebhook}>
-            <Select label="Merchant" value={selectedMerchantId} onChange={setSelectedMerchantId} options={data.merchants.map((item) => item.id)} render={merchantName(data.merchants)} />
             <label>
               URL
               <input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} required />
@@ -608,27 +603,12 @@ function MerchantsPanel({
           </form>
         </Panel>
       </div>
-      <Panel title="Merchants">
-        <table>
-          <thead><tr><th>Name</th><th>Status</th><th>ID</th><th>Created</th></tr></thead>
-          <tbody>
-            {data.merchants.map((merchant) => (
-              <tr key={merchant.id}>
-                <td>{merchant.name}</td>
-                <td><StatusPill status={merchant.status as Status} /></td>
-                <td><CopyText value={merchant.id} /></td>
-                <td>{formatDate(merchant.createdAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
       <div className="split-grid">
         <Panel title="API keys">
-          <ApiKeysTable apiKeys={data.apiKeys} merchants={data.merchants} />
+          <ApiKeysTable apiKeys={data.apiKeys} />
         </Panel>
         <Panel title="Webhook configs">
-          <WebhookConfigsTable configs={data.webhookConfigs} merchants={data.merchants} />
+          <WebhookConfigsTable configs={data.webhookConfigs} />
         </Panel>
       </div>
     </section>
@@ -654,10 +634,10 @@ function WalletsPanel({
         <RegisterTreasuryWalletForm data={data} token={token} mutate={mutate} />
       </Panel>
       <Panel title="Operational wallets">
-        <OperationalWalletsTable wallets={data.operationalWallets} merchants={data.merchants} />
+        <OperationalWalletsTable wallets={data.operationalWallets} />
       </Panel>
       <Panel title="Treasury wallets">
-        <TreasuryWalletsTable wallets={data.treasuryWallets} merchants={data.merchants} />
+        <TreasuryWalletsTable wallets={data.treasuryWallets} />
       </Panel>
     </section>
   );
@@ -704,7 +684,6 @@ function GenerateTreasuryWalletForm({
   token: string;
   mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
-  const [merchantId, setMerchantId] = useState(data.merchants[0]?.id ?? "");
   const [network, setNetwork] = useState(data.networks[0]?.network ?? "");
   const [tokenSymbol, setTokenSymbol] = useState<TokenSymbol>("USDT");
   const [label, setLabel] = useState("");
@@ -719,7 +698,7 @@ function GenerateTreasuryWalletForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     await mutate(
-      apiPost("/dashboard/api/wallets/treasury", token, { merchantId, network, token: tokenSymbol, label: label || undefined }),
+      apiPost("/dashboard/api/wallets/treasury", token, { network, token: tokenSymbol, label: label || undefined }),
       "Treasury wallet generated"
     );
     setLabel("");
@@ -728,7 +707,6 @@ function GenerateTreasuryWalletForm({
   return (
     <Panel title="Generate treasury wallet">
       <form className="form-grid" onSubmit={submit}>
-        <Select label="Merchant" value={merchantId} onChange={setMerchantId} options={data.merchants.map((item) => item.id)} render={merchantName(data.merchants)} />
         <Select label="Network" value={network} onChange={setNetwork} options={data.networks.map((item) => item.network)} />
         <Select label="Token" value={tokenSymbol} onChange={(value) => setTokenSymbol(value as TokenSymbol)} options={tokens} />
         <label>
@@ -750,7 +728,6 @@ function RegisterTreasuryWalletForm({
   token: string;
   mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
-  const [merchantId, setMerchantId] = useState(data.merchants[0]?.id ?? "");
   const [network, setNetwork] = useState(data.networks[0]?.network ?? "");
   const [tokenSymbol, setTokenSymbol] = useState<TokenSymbol>("USDT");
   const [address, setAddress] = useState("");
@@ -758,13 +735,12 @@ function RegisterTreasuryWalletForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await mutate(apiPost("/dashboard/api/treasury-wallets", token, { merchantId, network, token: tokenSymbol, address }), "Treasury wallet registered");
+    await mutate(apiPost("/dashboard/api/treasury-wallets", token, { network, token: tokenSymbol, address }), "Treasury wallet registered");
     setAddress("");
   }
 
   return (
     <form className="inline-form wide" onSubmit={submit}>
-      <Select label="Merchant" value={merchantId} onChange={setMerchantId} options={data.merchants.map((item) => item.id)} render={merchantName(data.merchants)} />
       <Select label="Network" value={network} onChange={setNetwork} options={data.networks.map((item) => item.network)} />
       <Select label="Token" value={tokenSymbol} onChange={(value) => setTokenSymbol(value as TokenSymbol)} options={tokens} />
       <label className="grow">
@@ -782,11 +758,9 @@ function DepositsPanel({ data }: { data: DashboardData }) {
       <HistoryPanel
         title="Deposit address history"
         resource="depositAddresses"
-        merchants={data.merchants}
         networks={data.networks}
         statusOptions={["active", "expired"]}
         columns={[
-          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
           { header: "Address", render: (row) => <CopyText value={stringField(row, "address")} /> },
@@ -796,11 +770,9 @@ function DepositsPanel({ data }: { data: DashboardData }) {
       <HistoryPanel
         title="Deposit transaction history"
         resource="deposits"
-        merchants={data.merchants}
         networks={data.networks}
         statusOptions={["detected", "confirmed", "late"]}
         columns={[
-          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
           { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
@@ -829,7 +801,6 @@ function TransfersPanel({
       <HistoryPanel
         title="Wallet transaction history"
         resource="walletTransactions"
-        merchants={data.merchants}
         networks={data.networks}
         statusOptions={["submitted", "confirmed", "failed"]}
         columns={[
@@ -844,12 +815,10 @@ function TransfersPanel({
       <HistoryPanel
         title="Gas top-up history"
         resource="gasTopUps"
-        merchants={data.merchants}
         networks={data.networks}
         statusOptions={["submitted", "confirmed", "failed"]}
         hideTokenFilter
         columns={[
-          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
           { header: "Network", render: (row) => stringField(row, "network") },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
           { header: "Tx / Error", render: (row) => stringField(row, "txHash") ? <CopyText value={stringField(row, "txHash")} /> : stringField(row, "failureReason") || "-" },
@@ -859,11 +828,9 @@ function TransfersPanel({
       <HistoryPanel
         title="Sweep history"
         resource="sweeps"
-        merchants={data.merchants}
         networks={data.networks}
         statusOptions={["submitted", "confirmed", "failed"]}
         columns={[
-          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
           { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
@@ -938,14 +905,12 @@ function WebhooksPanel({ data }: { data: DashboardData }) {
       <HistoryPanel
         title="Webhook event history"
         resource="webhooks"
-        merchants={data.merchants}
         networks={data.networks}
         statusOptions={["pending", "sent", "failed"]}
         hideNetworkFilter
         hideTokenFilter
         columns={[
           { header: "Type", render: (row) => stringField(row, "type") },
-          { header: "Merchant", render: (row) => merchantName(data.merchants)(stringField(row, "merchantId")) },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
           { header: "Attempts", render: (row) => stringField(row, "attempts") },
           { header: "Response", render: (row) => stringField(row, "responseStatus") || stringField(row, "lastError") || "-" },
@@ -964,7 +929,6 @@ interface HistoryColumn {
 function HistoryPanel({
   title,
   resource,
-  merchants,
   networks,
   statusOptions,
   columns,
@@ -973,7 +937,6 @@ function HistoryPanel({
 }: {
   title: string;
   resource: HistoryResource;
-  merchants: Merchant[];
   networks: EnabledNetwork[];
   statusOptions: string[];
   columns: HistoryColumn[];
@@ -1080,16 +1043,15 @@ function HistoryPanel({
   );
 }
 
-function OperationalWalletsTable({ wallets, merchants }: { wallets: OperationalWallet[]; merchants: Merchant[] }) {
+function OperationalWalletsTable({ wallets }: { wallets: OperationalWallet[] }) {
   return (
     <table>
-      <thead><tr><th>Label</th><th>Purpose</th><th>Merchant</th><th>Asset</th><th>Address</th><th>Updated</th></tr></thead>
+      <thead><tr><th>Label</th><th>Purpose</th><th>Asset</th><th>Address</th><th>Updated</th></tr></thead>
       <tbody>
         {wallets.map((wallet) => (
           <tr key={wallet.id}>
             <td>{wallet.label}</td>
             <td><StatusPill status={wallet.purpose as Status} /></td>
-            <td>{wallet.merchantId ? merchantName(merchants)(wallet.merchantId) : "Platform"}</td>
             <td>{wallet.network} {wallet.token ?? "NATIVE"}</td>
             <td><CopyText value={wallet.address} /></td>
             <td>{formatDate(wallet.updatedAt)}</td>
@@ -1100,14 +1062,13 @@ function OperationalWalletsTable({ wallets, merchants }: { wallets: OperationalW
   );
 }
 
-function TreasuryWalletsTable({ wallets, merchants }: { wallets: TreasuryWallet[]; merchants: Merchant[] }) {
+function TreasuryWalletsTable({ wallets }: { wallets: TreasuryWallet[] }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Network</th><th>Token</th><th>Address</th><th>Updated</th></tr></thead>
+      <thead><tr><th>Network</th><th>Token</th><th>Address</th><th>Updated</th></tr></thead>
       <tbody>
         {wallets.map((wallet) => (
           <tr key={wallet.id}>
-            <td>{merchantName(merchants)(wallet.merchantId)}</td>
             <td>{wallet.network}</td>
             <td>{wallet.token}</td>
             <td><CopyText value={wallet.address} /></td>
@@ -1119,14 +1080,13 @@ function TreasuryWalletsTable({ wallets, merchants }: { wallets: TreasuryWallet[
   );
 }
 
-function ApiKeysTable({ apiKeys, merchants }: { apiKeys: ApiKey[]; merchants: Merchant[] }) {
+function ApiKeysTable({ apiKeys }: { apiKeys: ApiKey[] }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Status</th><th>Public key</th><th>Last used</th><th>Created</th></tr></thead>
+      <thead><tr><th>Status</th><th>Public key</th><th>Last used</th><th>Created</th></tr></thead>
       <tbody>
         {apiKeys.map((apiKey) => (
           <tr key={apiKey.id}>
-            <td>{merchantName(merchants)(apiKey.merchantId)}</td>
             <td><StatusPill status={apiKey.status} /></td>
             <td><CopyText value={apiKey.publicKey} /></td>
             <td>{apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : "-"}</td>
@@ -1138,14 +1098,13 @@ function ApiKeysTable({ apiKeys, merchants }: { apiKeys: ApiKey[]; merchants: Me
   );
 }
 
-function WebhookConfigsTable({ configs, merchants }: { configs: WebhookConfig[]; merchants: Merchant[] }) {
+function WebhookConfigsTable({ configs }: { configs: WebhookConfig[] }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Status</th><th>URL</th><th>Updated</th></tr></thead>
+      <thead><tr><th>Status</th><th>URL</th><th>Updated</th></tr></thead>
       <tbody>
         {configs.map((config) => (
           <tr key={config.merchantId}>
-            <td>{merchantName(merchants)(config.merchantId)}</td>
             <td><StatusPill status={config.active ? "active" : "disabled"} /></td>
             <td><CopyText value={config.url} /></td>
             <td>{formatDate(config.updatedAt)}</td>
@@ -1156,14 +1115,13 @@ function WebhookConfigsTable({ configs, merchants }: { configs: WebhookConfig[];
   );
 }
 
-function DepositAddressesTable({ addresses, merchants }: { addresses: DepositAddress[]; merchants: Merchant[] }) {
+function DepositAddressesTable({ addresses }: { addresses: DepositAddress[] }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Asset</th><th>Status</th><th>Address</th><th>Expires</th></tr></thead>
+      <thead><tr><th>Asset</th><th>Status</th><th>Address</th><th>Expires</th></tr></thead>
       <tbody>
         {addresses.map((address) => (
           <tr key={address.id}>
-            <td>{merchantName(merchants)(address.merchantId)}</td>
             <td>{address.network} {address.token}</td>
             <td><StatusPill status={address.status} /></td>
             <td><CopyText value={address.address} /></td>
@@ -1175,14 +1133,13 @@ function DepositAddressesTable({ addresses, merchants }: { addresses: DepositAdd
   );
 }
 
-function DepositsTable({ deposits, merchants, compact = false }: { deposits: Deposit[]; merchants: Merchant[]; compact?: boolean }) {
+function DepositsTable({ deposits, compact = false }: { deposits: Deposit[]; compact?: boolean }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Asset</th><th>Amount</th><th>Status</th>{compact ? null : <th>Tx</th>}<th>Detected</th></tr></thead>
+      <thead><tr><th>Asset</th><th>Amount</th><th>Status</th>{compact ? null : <th>Tx</th>}<th>Detected</th></tr></thead>
       <tbody>
         {deposits.map((deposit) => (
           <tr key={deposit.id}>
-            <td>{merchantName(merchants)(deposit.merchantId)}</td>
             <td>{deposit.network} {deposit.token}</td>
             <td className="amount">{deposit.amountFormatted}</td>
             <td><StatusPill status={deposit.status} /></td>
@@ -1225,14 +1182,13 @@ function WalletTransactionsTable({
   );
 }
 
-function GasTopUpsTable({ topUps, merchants }: { topUps: GasTopUp[]; merchants: Merchant[] }) {
+function GasTopUpsTable({ topUps }: { topUps: GasTopUp[] }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Network</th><th>Status</th><th>Tx</th><th>Created</th></tr></thead>
+      <thead><tr><th>Network</th><th>Status</th><th>Tx</th><th>Created</th></tr></thead>
       <tbody>
         {topUps.map((topUp) => (
           <tr key={topUp.id}>
-            <td>{merchantName(merchants)(topUp.merchantId)}</td>
             <td>{topUp.network}</td>
             <td><StatusPill status={topUp.status} /></td>
             <td>{topUp.txHash ? <CopyText value={topUp.txHash} /> : topUp.failureReason ?? "-"}</td>
@@ -1244,14 +1200,13 @@ function GasTopUpsTable({ topUps, merchants }: { topUps: GasTopUp[]; merchants: 
   );
 }
 
-function SweepsTable({ sweeps, merchants }: { sweeps: Sweep[]; merchants: Merchant[] }) {
+function SweepsTable({ sweeps }: { sweeps: Sweep[] }) {
   return (
     <table>
-      <thead><tr><th>Merchant</th><th>Asset</th><th>Amount</th><th>Status</th><th>Tx</th></tr></thead>
+      <thead><tr><th>Asset</th><th>Amount</th><th>Status</th><th>Tx</th></tr></thead>
       <tbody>
         {sweeps.map((sweep) => (
           <tr key={sweep.id}>
-            <td>{merchantName(merchants)(sweep.merchantId)}</td>
             <td>{sweep.network} {sweep.token}</td>
             <td className="amount">{sweep.amountFormatted}</td>
             <td><StatusPill status={sweep.status} /></td>

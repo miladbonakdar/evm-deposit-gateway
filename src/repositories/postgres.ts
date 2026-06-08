@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
 import {
   chainCursors,
   depositAddresses,
@@ -94,6 +94,8 @@ function mapDepositAddress(row: typeof depositAddresses.$inferSelect): DepositAd
     network: row.network as NetworkSlug,
     token: row.token as TokenSymbol,
     address: row.address,
+    callbackUrl: row.callbackUrl,
+    callbackSecretEncrypted: row.callbackSecretEncrypted,
     status: row.status as DepositAddress["status"]
   };
 }
@@ -145,7 +147,13 @@ function mapWalletTransaction(row: typeof walletTransactions.$inferSelect): Wall
 }
 
 function mapWebhookEvent(row: typeof webhookEvents.$inferSelect): WebhookEvent {
-  return { ...row, type: row.type as WebhookEvent["type"], status: row.status as WebhookEvent["status"], payload: row.payload as Record<string, unknown> };
+  return {
+    ...row,
+    depositAddressId: row.depositAddressId,
+    type: row.type as WebhookEvent["type"],
+    status: row.status as WebhookEvent["status"],
+    payload: row.payload as Record<string, unknown>
+  };
 }
 
 function mapIdempotency(row: typeof idempotencyKeys.$inferSelect): IdempotencyRecord {
@@ -673,7 +681,7 @@ export class PostgresRepository implements Repository {
   }
 
   async createWebhookEvent(input: CreateWebhookEventInput): Promise<WebhookEvent> {
-    const rows = await this.db.insert(webhookEvents).values(input).returning();
+    const rows = await this.db.insert(webhookEvents).values({ ...input, depositAddressId: input.depositAddressId ?? null }).returning();
     return mapWebhookEvent(rows[0] as typeof webhookEvents.$inferSelect);
   }
 
@@ -695,7 +703,7 @@ export class PostgresRepository implements Repository {
   async markWebhookSent(id: string, responseStatus: number, sentAt: Date): Promise<WebhookEvent | null> {
     const rows = await this.db
       .update(webhookEvents)
-      .set({ status: "sent", responseStatus, sentAt, updatedAt: sentAt })
+      .set({ status: "sent", attempts: sql`${webhookEvents.attempts} + 1`, responseStatus, sentAt, updatedAt: sentAt })
       .where(eq(webhookEvents.id, id))
       .returning();
     const row = first(rows);

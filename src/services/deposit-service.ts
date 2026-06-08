@@ -13,6 +13,8 @@ export interface CreateDepositAddressInput {
   merchantId: string;
   network: NetworkSlug;
   token: TokenSymbol;
+  callbackUrl: string;
+  callbackSecret: string;
   ttlSeconds?: number;
   externalId?: string;
   metadata?: unknown;
@@ -48,15 +50,22 @@ export class DepositService {
       token: input.token,
       address: normalizeAddress(networkConfig, wallet.address),
       privateKeyEncrypted: this.encryptor.encryptString(wallet.privateKey),
+      callbackUrl: input.callbackUrl,
+      callbackSecretEncrypted: this.encryptor.encryptString(input.callbackSecret),
       expiresAt,
       externalId: input.externalId ?? null,
       metadata: input.metadata ?? {}
     });
 
-    await this.webhooks.enqueueMerchantEvent(input.merchantId, "wallet.created", {
-      depositAddress: publicDepositAddress(depositAddress),
-      treasuryWallet: treasury.address
-    });
+    await this.webhooks.enqueueMerchantEvent(
+      input.merchantId,
+      "wallet.created",
+      {
+        depositAddress: publicDepositAddress(depositAddress),
+        treasuryWallet: treasury.address
+      },
+      { depositAddressId: depositAddress.id }
+    );
 
     return {
       ...publicDepositAddress(depositAddress),
@@ -136,6 +145,7 @@ export function publicDepositAddress(depositAddress: DepositAddress) {
     network: depositAddress.network,
     token: depositAddress.token,
     address: depositAddress.address,
+    callbackUrl: depositAddress.callbackUrl,
     status: depositAddress.status,
     expiresAt: depositAddress.expiresAt.toISOString(),
     externalId: depositAddress.externalId,

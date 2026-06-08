@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { getAddress, isAddress, type Chain } from "viem";
 import {
   arbitrum,
@@ -95,31 +97,92 @@ const envSuffixBySlug = {
 
 const upperSlug = (network: NetworkSlug): string => envSuffixBySlug[network];
 
-function parseBigIntEnv(env: NodeJS.ProcessEnv, key: string, fallback: bigint): bigint {
-  const raw = env[key];
-  if (!raw) {
-    return fallback;
-  }
+const unsignedIntegerValueSchema = z
+  .union([z.string(), z.number().int().nonnegative()])
+  .transform((value) => String(value).trim())
+  .refine((value) => /^\d+$/.test(value), "must be an unsigned integer string");
 
-  if (!/^\d+$/.test(raw)) {
-    throw new Error(`${key} must be an unsigned integer string`);
-  }
+const configuredTokenSchema = z
+  .object({
+    contractAddress: z.string().trim().optional(),
+    decimals: z.number().int().min(0).max(36).optional()
+  })
+  .strict();
 
-  return BigInt(raw);
+const configuredNetworkSchema = z
+  .object({
+    confirmations: z.number().int().nonnegative().optional(),
+    scanFromBlock: unsignedIntegerValueSchema.optional(),
+    maxScanBlocks: unsignedIntegerValueSchema.optional(),
+    minGasWei: unsignedIntegerValueSchema.optional(),
+    gasTopUpWei: unsignedIntegerValueSchema.optional(),
+    tokens: z
+      .object({
+        USDT: configuredTokenSchema.optional(),
+        USDC: configuredTokenSchema.optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
+const networkBusinessConfigSchema = z
+  .object({
+    networks: z.record(z.enum(networkSlugs), configuredNetworkSchema).default({})
+  })
+  .strict();
+
+export type NetworkBusinessConfig = z.infer<typeof networkBusinessConfigSchema>;
+export type NetworkBusinessConfigInput = NetworkBusinessConfig | string;
+
+function formatZodIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).join("; ");
 }
 
-function parseNumberEnv(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
-  const raw = env[key];
-  if (!raw) {
-    return fallback;
+export function loadNetworkBusinessConfig(configPath = "config/networks.example.json"): NetworkBusinessConfig {
+  const resolvedPath = resolve(process.cwd(), configPath);
+  let raw: string;
+
+  try {
+    raw = readFileSync(resolvedPath, "utf8");
+  } catch (error) {
+    throw new Error(`Unable to read network config at ${configPath}: ${(error as Error).message}`);
   }
 
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(`${key} must be a non-negative integer`);
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Unable to parse network config at ${configPath}: ${(error as Error).message}`);
   }
 
-  return parsed;
+  const parsed = networkBusinessConfigSchema.safeParse(parsedJson);
+  if (!parsed.success) {
+    throw new Error(`Invalid network config at ${configPath}: ${formatZodIssues(parsed.error)}`);
+  }
+
+  return parsed.data;
+}
+
+function resolveNetworkBusinessConfig(input?: NetworkBusinessConfigInput): NetworkBusinessConfig {
+  if (!input || typeof input === "string") {
+    return loadNetworkBusinessConfig(input);
+  }
+
+  const parsed = networkBusinessConfigSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(`Invalid network config: ${formatZodIssues(parsed.error)}`);
+  }
+
+  return parsed.data;
+}
+
+function parseBigIntConfig(raw: string | undefined, fallback: bigint): bigint {
+  return raw === undefined ? fallback : BigInt(raw);
+}
+
+function parseNumberConfig(raw: number | undefined, fallback: number): number {
+  return raw === undefined ? fallback : raw;
 }
 
 function normalizeConfiguredAddress(kind: NetworkKind, address: string, envKey: string): string {
@@ -144,34 +207,31 @@ function normalizeConfiguredAddress(kind: NetworkKind, address: string, envKey: 
 }
 
 function parseToken(
-  env: NodeJS.ProcessEnv,
+  configuredNetwork: z.infer<typeof configuredNetworkSchema> | undefined,
   network: NetworkSlug,
   kind: NetworkKind,
   token: TokenSymbol
 ): TokenConfig | undefined {
-  const suffix = upperSlug(network);
-  const addressKey = `${token}_CONTRACT_${suffix}`;
-  const decimalsKey = `${token}_DECIMALS_${suffix}`;
-  const address = env[addressKey];
-  const decimalsRaw = env[decimalsKey];
+  const configKey = `networks.${network}.tokens.${token}`;
+  const tokenConfig = configuredNetwork?.tokens?.[token];
+  if (!tokenConfig) {
+    return undefined;
+  }
+
+  const address = tokenConfig.contractAddress?.trim();
 
   if (!address) {
     return undefined;
   }
 
-  if (!decimalsRaw) {
-    throw new Error(`${decimalsKey} is required when ${addressKey} is set`);
-  }
-
-  const decimals = Number(decimalsRaw);
-  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-    throw new Error(`${decimalsKey} must be an integer from 0 to 36`);
+  if (tokenConfig.decimals === undefined) {
+    throw new Error(`${configKey}.decimals is required when ${configKey}.contractAddress is set`);
   }
 
   return {
     symbol: token,
-    contractAddress: normalizeConfiguredAddress(kind, address, addressKey),
-    decimals
+    contractAddress: normalizeConfiguredAddress(kind, address, `${configKey}.contractAddress`),
+    decimals: tokenConfig.decimals
   };
 }
 
@@ -191,7 +251,11 @@ function validateGasPrivateKey(kind: NetworkKind, suffix: string, privateKey: st
   }
 }
 
-export function loadSupportedNetworks(env: NodeJS.ProcessEnv = process.env): SupportedNetworks {
+export function loadSupportedNetworks(
+  env: NodeJS.ProcessEnv = process.env,
+  configInput: NetworkBusinessConfigInput = env.NETWORK_CONFIG_PATH ?? "config/networks.example.json"
+): SupportedNetworks {
+  const businessConfig = resolveNetworkBusinessConfig(configInput);
   const networks = {} as SupportedNetworks;
 
   for (const network of networkSlugs) {
@@ -204,16 +268,21 @@ export function loadSupportedNetworks(env: NodeJS.ProcessEnv = process.env): Sup
       continue;
     }
 
+    const configuredNetwork = businessConfig.networks[network];
+    if (!configuredNetwork) {
+      throw new Error(`networks.${network} must be configured when RPC_URL_${suffix} is set`);
+    }
+
     const tokens = {} as Record<TokenSymbol, TokenConfig | undefined>;
     for (const token of tokenSymbols) {
-      tokens[token] = parseToken(env, network, kind, token);
+      tokens[token] = parseToken(configuredNetwork, network, kind, token);
     }
 
     if (!tokens.USDT && !tokens.USDC) {
-      throw new Error(`At least one token contract must be set when RPC_URL_${suffix} is set`);
+      throw new Error(`At least one token contract must be configured for networks.${network} when RPC_URL_${suffix} is set`);
     }
 
-    const gasWalletPrivateKey = env[`GAS_WALLET_PRIVATE_KEY_${suffix}`];
+    const gasWalletPrivateKey = env[`GAS_WALLET_PRIVATE_KEY_${suffix}`] || undefined;
     validateGasPrivateKey(kind, suffix, gasWalletPrivateKey);
 
     const chain = chainBySlug[network];
@@ -224,12 +293,12 @@ export function loadSupportedNetworks(env: NodeJS.ProcessEnv = process.env): Sup
       chainId: chain?.id,
       rpcUrl,
       eventServerUrl: env[`EVENT_SERVER_URL_${suffix}`] || undefined,
-      confirmations: parseNumberEnv(env, `CONFIRMATIONS_${suffix}`, kind === "tron" ? 20 : 12),
-      scanFromBlock: parseBigIntEnv(env, `SCAN_FROM_BLOCK_${suffix}`, 0n),
-      maxScanBlocks: parseBigIntEnv(env, `MAX_SCAN_BLOCKS_${suffix}`, kind === "tron" ? 500n : 1000n),
+      confirmations: parseNumberConfig(configuredNetwork.confirmations, kind === "tron" ? 20 : 12),
+      scanFromBlock: parseBigIntConfig(configuredNetwork.scanFromBlock, 0n),
+      maxScanBlocks: parseBigIntConfig(configuredNetwork.maxScanBlocks, kind === "tron" ? 500n : 1000n),
       gasWalletPrivateKey,
-      minGasWei: parseBigIntEnv(env, `MIN_GAS_WEI_${suffix}`, kind === "tron" ? 5_000_000n : 2_000_000_000_000_000n),
-      gasTopUpWei: parseBigIntEnv(env, `GAS_TOPUP_WEI_${suffix}`, kind === "tron" ? 10_000_000n : 5_000_000_000_000_000n),
+      minGasWei: parseBigIntConfig(configuredNetwork.minGasWei, kind === "tron" ? 5_000_000n : 2_000_000_000_000_000n),
+      gasTopUpWei: parseBigIntConfig(configuredNetwork.gasTopUpWei, kind === "tron" ? 10_000_000n : 5_000_000_000_000_000n),
       tokens
     };
   }

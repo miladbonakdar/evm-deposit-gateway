@@ -89,6 +89,8 @@ async function setupWorker(ttlSeconds = 3600) {
     merchantId: merchant.id,
     network: "ethereum",
     token: "USDT",
+    callbackUrl: "https://example.com/deposit-callback",
+    callbackSecret: "deposit-callback-secret",
     ttlSeconds
   });
   const evm = new MockChainProvider();
@@ -206,6 +208,8 @@ describe("deposit worker", () => {
       merchantId: merchant.id,
       network: "ethereum",
       token: "USDT",
+      callbackUrl: "https://example.com/stored-gas-callback",
+      callbackSecret: "stored-gas-callback-secret",
       ttlSeconds: 3600
     });
     const evm = new MockChainProvider();

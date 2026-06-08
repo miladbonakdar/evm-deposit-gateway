@@ -5,6 +5,7 @@ public/dashboard
 .env.*
 !.env.example
 !.env.testnet.example
+config/*.local.json
 coverage
 drizzle/meta
 *.tsbuildinfo

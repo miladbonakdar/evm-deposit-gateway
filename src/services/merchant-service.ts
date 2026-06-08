@@ -17,6 +17,15 @@ export class MerchantService {
     return this.repo.createMerchant({ id: newId(), name });
   }
 
+  async getOrCreateOwnerMerchant(ownerMerchantId: string, ownerMerchantName: string) {
+    const existing = await this.repo.getMerchant(ownerMerchantId);
+    if (existing) {
+      return existing;
+    }
+
+    return this.repo.createMerchant({ id: ownerMerchantId, name: ownerMerchantName });
+  }
+
   async createApiKey(merchantId: string) {
     await this.requireMerchant(merchantId);
     const apiSecret = newSecret();

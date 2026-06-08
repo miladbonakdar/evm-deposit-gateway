@@ -17,9 +17,10 @@ The API and worker use the same image but different commands.
 
 ```bash
 cp .env.example .env
+cp config/networks.example.json config/networks.local.json
 ```
 
-Fill the required values in `.env`:
+Fill the required environment and secret values in `.env`:
 
 - `ADMIN_API_KEY`
 - `ADMIN_DASHBOARD_USERNAME`
@@ -27,8 +28,15 @@ Fill the required values in `.env`:
 - `ADMIN_SESSION_SECRET`
 - `ENCRYPTION_MASTER_KEY_BASE64`
 - at least one `RPC_URL_*`
-- at least one token contract and decimals for that network
 - gas wallet private key or a generated dashboard gas wallet for any network that needs automatic gas top-ups
+
+Fill the business network settings in `config/networks.local.json`:
+
+- at least one token contract and decimals for any network with an `RPC_URL_*`
+- confirmations
+- `scanFromBlock`
+- `maxScanBlocks`
+- gas balance and top-up thresholds
 
 Then run:
 
@@ -47,6 +55,14 @@ The dashboard will be available at:
 ```text
 http://localhost:3000/dashboard
 ```
+
+Postgres is reachable from your host at:
+
+```text
+postgres://postgres:postgres@localhost:5432/crypto_payment
+```
+
+Inside Compose containers, the app still uses `postgres://postgres:postgres@db:5432/crypto_payment`.
 
 Health check:
 
@@ -96,6 +112,12 @@ Validate Compose without a local `.env`:
 
 ```bash
 APP_ENV_FILE=.env.example docker compose config
+```
+
+Use a different host database port if `5432` is busy:
+
+```bash
+POSTGRES_HOST_PORT=5433 docker compose up -d db
 ```
 
 ## Production Notes

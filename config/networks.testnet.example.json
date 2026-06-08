@@ -1,0 +1,123 @@
+{
+  "networks": {
+    "sepolia": {
+      "confirmations": 3,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "1000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "bscTestnet": {
+      "confirmations": 6,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "2000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 18
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 18
+        }
+      }
+    },
+    "polygonAmoy": {
+      "confirmations": 16,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "arbitrumSepolia": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "optimismSepolia": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "baseSepolia": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "3000",
+      "minGasWei": "500000000000000",
+      "gasTopUpWei": "1000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "nile": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "500",
+      "minGasWei": "5000000",
+      "gasTopUpWei": "10000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    }
+  }
+}

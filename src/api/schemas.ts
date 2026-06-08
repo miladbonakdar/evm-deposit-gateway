@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { networkSchema, tokenSchema } from "../config/networks.js";
 
-export const createMerchantSchema = z.object({
-  name: z.string().trim().min(1).max(120)
-});
-
 export const configureWebhookSchema = z.object({
   url: z.string().url(),
   secret: z.string().min(16).max(256).optional(),
@@ -42,14 +38,14 @@ export const generateGasWalletSchema = z.object({
 });
 
 export const generateTreasuryWalletSchema = z.object({
-  merchantId: z.string().uuid(),
+  merchantId: z.string().uuid().optional(),
   network: networkSchema,
   token: tokenSchema,
   label: z.string().trim().min(1).max(120).optional()
 });
 
 export const registerTreasuryWalletSchema = z.object({
-  merchantId: z.string().uuid(),
+  merchantId: z.string().uuid().optional(),
   network: networkSchema,
   token: tokenSchema,
   address: z.string().min(1)
@@ -65,6 +61,8 @@ export const createWalletTransactionSchema = z.object({
 export const createDepositAddressSchema = z.object({
   network: networkSchema,
   token: tokenSchema,
+  callbackUrl: z.string().url(),
+  callbackSecret: z.string().min(16).max(256),
   ttlSeconds: z.number().int().min(60).max(2_592_000).optional(),
   externalId: z.string().trim().min(1).max(128).optional(),
   metadata: z.record(z.unknown()).default({}),

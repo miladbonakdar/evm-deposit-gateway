@@ -4,7 +4,12 @@ import { newId } from "../utils/id.js";
 import type { Repository } from "../repositories/repository.js";
 
 export interface WebhookService {
-  enqueueMerchantEvent(merchantId: string, type: WebhookEventType, data: Record<string, unknown>): Promise<void>;
+  enqueueMerchantEvent(
+    merchantId: string,
+    type: WebhookEventType,
+    data: Record<string, unknown>,
+    options?: { depositAddressId?: string }
+  ): Promise<void>;
 }
 
 export class DefaultWebhookService implements WebhookService {
@@ -13,10 +18,15 @@ export class DefaultWebhookService implements WebhookService {
     private readonly encryptor: Encryptor
   ) {}
 
-  async enqueueMerchantEvent(merchantId: string, type: WebhookEventType, data: Record<string, unknown>): Promise<void> {
-    const config = await this.repo.getWebhookConfig(merchantId);
+  async enqueueMerchantEvent(
+    merchantId: string,
+    type: WebhookEventType,
+    data: Record<string, unknown>,
+    options: { depositAddressId?: string } = {}
+  ): Promise<void> {
+    const target = await this.resolveCallbackTarget(merchantId, options.depositAddressId);
 
-    if (!config?.active) {
+    if (!target) {
       return;
     }
 
@@ -25,9 +35,10 @@ export class DefaultWebhookService implements WebhookService {
     await this.repo.createWebhookEvent({
       id,
       merchantId,
+      depositAddressId: options.depositAddressId ?? null,
       type,
-      url: config.url,
-      secretEncrypted: config.secretEncrypted,
+      url: target.url,
+      secretEncrypted: target.secretEncrypted,
       payload: {
         id,
         type,
@@ -38,5 +49,30 @@ export class DefaultWebhookService implements WebhookService {
     });
 
     void this.encryptor;
+  }
+
+  private async resolveCallbackTarget(
+    merchantId: string,
+    depositAddressId: string | undefined
+  ): Promise<{ url: string; secretEncrypted: string } | null> {
+    if (depositAddressId) {
+      const depositAddress = await this.repo.getDepositAddressForMerchant(merchantId, depositAddressId);
+      if (depositAddress?.callbackUrl && depositAddress.callbackSecretEncrypted) {
+        return {
+          url: depositAddress.callbackUrl,
+          secretEncrypted: depositAddress.callbackSecretEncrypted
+        };
+      }
+    }
+
+    const config = await this.repo.getWebhookConfig(merchantId);
+    if (!config?.active) {
+      return null;
+    }
+
+    return {
+      url: config.url,
+      secretEncrypted: config.secretEncrypted
+    };
   }
 }

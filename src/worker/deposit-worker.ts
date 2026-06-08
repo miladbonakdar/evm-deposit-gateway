@@ -35,7 +35,7 @@ export class DepositWorker {
     for (const depositAddress of expired) {
       await this.deps.webhooks.enqueueMerchantEvent(depositAddress.merchantId, "wallet.expired", {
         depositAddress: publicDepositAddress(depositAddress)
-      });
+      }, { depositAddressId: depositAddress.id });
     }
   }
 
@@ -88,7 +88,8 @@ export class DepositWorker {
             await this.deps.webhooks.enqueueMerchantEvent(
               transfer.merchantId,
               isLate ? "deposit.late_detected" : "transfer.detected",
-              { transfer: publicTransfer(transfer), depositAddress: publicDepositAddress(depositAddress) }
+              { transfer: publicTransfer(transfer), depositAddress: publicDepositAddress(depositAddress) },
+              { depositAddressId: depositAddress.id }
             );
             if (isLate) {
               await this.ensureSettlement(transfer);
@@ -124,7 +125,7 @@ export class DepositWorker {
 
           await this.deps.webhooks.enqueueMerchantEvent(confirmed.merchantId, "deposit.confirmed", {
             transfer: publicTransfer(confirmed)
-          });
+          }, { depositAddressId: confirmed.depositAddressId });
           await this.ensureSettlement(confirmed);
         }
       }
@@ -154,7 +155,7 @@ export class DepositWorker {
         if (confirmed) {
           await this.deps.webhooks.enqueueMerchantEvent(confirmed.merchantId, "gas.topup.confirmed", {
             gasTopUp: publicGasTopUp(confirmed)
-          });
+          }, { depositAddressId: confirmed.depositAddressId });
           const transfer = await this.findTransferForSettlement(confirmed.transferId);
           if (transfer) {
             await this.ensureSettlement(transfer);
@@ -189,7 +190,7 @@ export class DepositWorker {
         if (confirmed) {
           await this.deps.webhooks.enqueueMerchantEvent(confirmed.merchantId, "sweep.confirmed", {
             sweep: publicSweep(confirmed)
-          });
+          }, { depositAddressId: confirmed.depositAddressId });
         }
       } else {
         await this.failSweep(sweep, "Sweep transaction reverted");
@@ -236,7 +237,7 @@ export class DepositWorker {
         });
         await this.deps.webhooks.enqueueMerchantEvent(transfer.merchantId, "gas.topup.failed", {
           gasTopUp: publicGasTopUp(gasTopUp)
-        });
+        }, { depositAddressId: transfer.depositAddressId });
         return;
       }
 
@@ -261,7 +262,7 @@ export class DepositWorker {
         if (created) {
           await this.deps.webhooks.enqueueMerchantEvent(transfer.merchantId, "gas.topup.submitted", {
             gasTopUp: publicGasTopUp(gasTopUp)
-          });
+          }, { depositAddressId: transfer.depositAddressId });
         }
       } catch (error) {
         const { gasTopUp } = await this.deps.repo.createGasTopUpIfNotExists({
@@ -277,7 +278,7 @@ export class DepositWorker {
         });
         await this.deps.webhooks.enqueueMerchantEvent(transfer.merchantId, "gas.topup.failed", {
           gasTopUp: publicGasTopUp(gasTopUp)
-        });
+        }, { depositAddressId: transfer.depositAddressId });
       }
       void token;
       return;
@@ -360,7 +361,7 @@ export class DepositWorker {
       if (created) {
         await this.deps.webhooks.enqueueMerchantEvent(transfer.merchantId, "sweep.submitted", {
           sweep: publicSweep(sweep)
-        });
+        }, { depositAddressId: transfer.depositAddressId });
       }
     } catch (error) {
       const { sweep } = await this.deps.repo.createSweepIfNotExists({
@@ -379,7 +380,7 @@ export class DepositWorker {
       });
       await this.deps.webhooks.enqueueMerchantEvent(transfer.merchantId, "sweep.failed", {
         sweep: publicSweep(sweep)
-      });
+      }, { depositAddressId: transfer.depositAddressId });
     }
   }
 
@@ -392,7 +393,7 @@ export class DepositWorker {
     if (failed) {
       await this.deps.webhooks.enqueueMerchantEvent(failed.merchantId, "gas.topup.failed", {
         gasTopUp: publicGasTopUp(failed)
-      });
+      }, { depositAddressId: failed.depositAddressId });
     }
   }
 
@@ -401,7 +402,7 @@ export class DepositWorker {
     if (failed) {
       await this.deps.webhooks.enqueueMerchantEvent(failed.merchantId, "sweep.failed", {
         sweep: publicSweep(failed)
-      });
+      }, { depositAddressId: failed.depositAddressId });
     }
   }
 }

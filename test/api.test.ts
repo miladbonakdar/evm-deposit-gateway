@@ -13,11 +13,8 @@ import {
   testTronTreasuryAddress
 } from "./helpers.js";
 
-interface MerchantResponse {
-  id: string;
-}
-
 interface ApiKeyResponse {
+  id: string;
   apiKey: string;
   apiSecret: string;
 }
@@ -25,6 +22,7 @@ interface ApiKeyResponse {
 interface DepositAddressResponse {
   id: string;
   address: string;
+  callbackUrl: string;
   qr: {
     base64?: string;
   };
@@ -81,32 +79,30 @@ async function setupApi() {
   const config = createTestConfig();
   const app = createApp({ repo, config });
 
-  const merchantResponse = await app.request("/admin/merchants", {
-    method: "POST",
-    headers: adminHeaders(),
-    body: JSON.stringify({ name: "Acme" })
+  const ownerResponse = await app.request("/admin/owner", {
+    headers: adminHeaders()
   });
-  const merchant = (await merchantResponse.json()) as MerchantResponse;
+  expect(ownerResponse.status).toBe(200);
 
-  const apiKeyResponse = await app.request(`/admin/merchants/${merchant.id}/api-keys`, {
+  const apiKeyResponse = await app.request("/admin/api-keys", {
     method: "POST",
     headers: adminHeaders()
   });
   const apiKey = (await apiKeyResponse.json()) as ApiKeyResponse;
 
-  await app.request(`/admin/merchants/${merchant.id}/webhook`, {
+  await app.request("/admin/webhook", {
     method: "PUT",
     headers: adminHeaders(),
     body: JSON.stringify({ url: "https://example.com/webhook", secret: "merchant-webhook-secret" })
   });
 
-  await app.request(`/admin/merchants/${merchant.id}/treasury-wallets`, {
+  await app.request("/admin/treasury-wallets", {
     method: "PUT",
     headers: adminHeaders(),
     body: JSON.stringify({ network: "ethereum", token: "USDT", address: testTreasuryAddress })
   });
 
-  return { app, repo, merchant, apiKey };
+  return { app, repo, apiKey };
 }
 
 async function dashboardToken(app: ReturnType<typeof createApp>) {
@@ -145,19 +141,13 @@ async function setupTronApi() {
   const config = createTestConfig({ networks });
   const app = createApp({ repo, config });
 
-  const merchantResponse = await app.request("/admin/merchants", {
-    method: "POST",
-    headers: adminHeaders(),
-    body: JSON.stringify({ name: "Tron Merchant" })
-  });
-  const merchant = (await merchantResponse.json()) as MerchantResponse;
-  const apiKeyResponse = await app.request(`/admin/merchants/${merchant.id}/api-keys`, {
+  const apiKeyResponse = await app.request("/admin/api-keys", {
     method: "POST",
     headers: adminHeaders()
   });
   const apiKey = (await apiKeyResponse.json()) as ApiKeyResponse;
 
-  await app.request(`/admin/merchants/${merchant.id}/treasury-wallets`, {
+  await app.request("/admin/treasury-wallets", {
     method: "PUT",
     headers: adminHeaders(),
     body: JSON.stringify({ network: "tron", token: "USDT", address: testTronTreasuryAddress })
@@ -167,11 +157,13 @@ async function setupTronApi() {
 }
 
 describe("Hono API", () => {
-  it("creates merchants, credentials, webhook config, treasury wallets, and deposit addresses", async () => {
-    const { app, apiKey } = await setupApi();
+  it("creates owner credentials, webhook config, treasury wallets, and deposit addresses", async () => {
+    const { app, apiKey, repo } = await setupApi();
     const body = JSON.stringify({
       network: "ethereum",
       token: "USDT",
+      callbackUrl: "https://example.com/invoice-1-callback",
+      callbackSecret: "invoice-1-callback-secret",
       ttlSeconds: 3600,
       externalId: "invoice-1",
       metadata: { customerId: "cus_1" },
@@ -195,8 +187,17 @@ describe("Hono API", () => {
     expect(response.status).toBe(201);
     const depositAddress = (await response.json()) as DepositAddressResponse;
     expect(depositAddress.address).toMatch(/^0x[a-f0-9]{40}$/);
+    expect(depositAddress.callbackUrl).toBe("https://example.com/invoice-1-callback");
     expect(depositAddress.qr.base64).toEqual(expect.any(String));
     expect(depositAddress.privateKey).toBeUndefined();
+    const callbacks = await repo.listDueWebhookEvents(new Date(), 10);
+    expect(callbacks[0]).toEqual(
+      expect.objectContaining({
+        type: "wallet.created",
+        url: "https://example.com/invoice-1-callback",
+        depositAddressId: depositAddress.id
+      })
+    );
 
     const replay = await app.request("/v1/deposit-addresses", {
       method: "POST",
@@ -220,7 +221,12 @@ describe("Hono API", () => {
 
   it("rejects reused nonces and unsupported assets", async () => {
     const { app, apiKey } = await setupApi();
-    const body = JSON.stringify({ network: "ethereum", token: "USDC" });
+    const body = JSON.stringify({
+      network: "ethereum",
+      token: "USDC",
+      callbackUrl: "https://example.com/unsupported-callback",
+      callbackSecret: "unsupported-callback-secret"
+    });
     const headers = signedHeaders({
       apiKey: apiKey.apiKey,
       apiSecret: apiKey.apiSecret,
@@ -259,7 +265,13 @@ describe("Hono API", () => {
 
   it("creates TRON deposit addresses when TRON is configured", async () => {
     const { app, apiKey } = await setupTronApi();
-    const body = JSON.stringify({ network: "tron", token: "USDT", ttlSeconds: 3600 });
+    const body = JSON.stringify({
+      network: "tron",
+      token: "USDT",
+      callbackUrl: "https://example.com/tron-callback",
+      callbackSecret: "tron-callback-secret",
+      ttlSeconds: 3600
+    });
     const response = await app.request("/v1/deposit-addresses", {
       method: "POST",
       headers: signedHeaders({
@@ -290,14 +302,7 @@ describe("Hono API", () => {
 
     expect(login.status).toBe(401);
     const token = await dashboardToken(app);
-    const merchantResponse = await app.request("/dashboard/api/merchants", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ name: "Dashboard Merchant" })
-    });
-    const merchant = (await merchantResponse.json()) as MerchantResponse;
-
-    const dashboardApiKey = await app.request(`/dashboard/api/merchants/${merchant.id}/api-keys`, {
+    const dashboardApiKey = await app.request("/dashboard/api/api-keys", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({})
@@ -306,7 +311,7 @@ describe("Hono API", () => {
     const dashboardApiKeyBody = (await dashboardApiKey.json()) as ApiKeyResponse;
     expect(dashboardApiKeyBody.apiSecret).toEqual(expect.any(String));
 
-    const dashboardWebhook = await app.request(`/dashboard/api/merchants/${merchant.id}/webhook`, {
+    const dashboardWebhook = await app.request("/dashboard/api/webhook", {
       method: "PUT",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ url: "https://example.com/dashboard-webhook", secret: "dashboard-webhook-secret" })
@@ -323,7 +328,7 @@ describe("Hono API", () => {
     const treasuryWallet = await app.request("/dashboard/api/wallets/treasury", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ merchantId: merchant.id, network: "ethereum", token: "USDT" })
+      body: JSON.stringify({ network: "ethereum", token: "USDT" })
     });
     expect(treasuryWallet.status).toBe(201);
     const treasuryBody = (await treasuryWallet.json()) as { operationalWallet: { id: string; privateKey?: string } };
@@ -394,16 +399,10 @@ describe("Hono API", () => {
     const chainProvider = new MockChainProvider();
     const app = createApp({ repo, config, chainProvider });
     const token = await dashboardToken(app);
-    const merchantResponse = await app.request("/dashboard/api/merchants", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ name: "Failure Merchant" })
-    });
-    const merchant = (await merchantResponse.json()) as MerchantResponse;
     const treasuryWallet = await app.request("/dashboard/api/wallets/treasury", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ merchantId: merchant.id, network: "ethereum", token: "USDT" })
+      body: JSON.stringify({ network: "ethereum", token: "USDT" })
     });
     const treasuryBody = (await treasuryWallet.json()) as { operationalWallet: { id: string } };
 

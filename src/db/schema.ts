@@ -121,6 +121,8 @@ export const depositAddresses = pgTable(
     token: text("token").notNull(),
     address: text("address").notNull(),
     privateKeyEncrypted: text("private_key_encrypted").notNull(),
+    callbackUrl: text("callback_url"),
+    callbackSecretEncrypted: text("callback_secret_encrypted"),
     status: text("status").notNull().default("active"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     externalId: text("external_id"),
@@ -276,6 +278,7 @@ export const webhookEvents = pgTable(
     merchantId: uuid("merchant_id")
       .notNull()
       .references(() => merchants.id, { onDelete: "cascade" }),
+    depositAddressId: uuid("deposit_address_id").references(() => depositAddresses.id, { onDelete: "set null" }),
     type: text("type").notNull(),
     url: text("url").notNull(),
     secretEncrypted: text("secret_encrypted").notNull(),
@@ -291,7 +294,8 @@ export const webhookEvents = pgTable(
   },
   (table) => ({
     dueIdx: index("webhook_events_due_idx").on(table.status, table.nextAttemptAt),
-    merchantIdx: index("webhook_events_merchant_idx").on(table.merchantId)
+    merchantIdx: index("webhook_events_merchant_idx").on(table.merchantId),
+    depositAddressIdx: index("webhook_events_deposit_address_idx").on(table.depositAddressId)
   })
 );
 

@@ -32,7 +32,6 @@ import {
   dashboardListQuerySchema,
   dashboardHistoryQuerySchema,
   dashboardLoginSchema,
-  createMerchantSchema,
   generateGasWalletSchema,
   generateTreasuryWalletSchema,
   listDepositsQuerySchema,
@@ -51,7 +50,8 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   const merchantService = new MerchantService(repo, config.encryptor, config.networks);
   const depositService = new DepositService(repo, config.encryptor, config.networks, webhookService);
   const chainProvider = suppliedChainProvider ?? new MultiChainProvider(new ViemEvmProvider(), new TronProvider());
-  const dashboardService = new DashboardService(repo, config.encryptor, config.networks, chainProvider);
+  const dashboardService = new DashboardService(repo, config.encryptor, config.networks, chainProvider, config.ownerMerchantId);
+  const getOwnerMerchant = () => merchantService.getOrCreateOwnerMerchant(config.ownerMerchantId, config.ownerMerchantName);
 
   app.onError((error, c) => {
     if (error instanceof AppError) {
@@ -106,14 +106,19 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     return c.json({ user: { username: session.sub }, expiresAt: new Date(session.exp * 1000).toISOString() });
   });
 
-  app.get("/dashboard/api/overview", async (c) => c.json(await dashboardService.getOverview()));
+  app.get("/dashboard/api/overview", async (c) => {
+    await getOwnerMerchant();
+    return c.json(await dashboardService.getOverview());
+  });
 
   app.get("/dashboard/api/data", async (c) => {
+    await getOwnerMerchant();
     const query = dashboardListQuerySchema.parse({ limit: c.req.query("limit") });
     return c.json(await dashboardService.listDashboardData(query.limit));
   });
 
   app.get("/dashboard/api/history", async (c) => {
+    await getOwnerMerchant();
     const query = dashboardHistoryQuerySchema.parse({
       resource: c.req.query("resource"),
       limit: c.req.query("limit"),
@@ -126,29 +131,16 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     return c.json(await dashboardService.getHistory(query));
   });
 
-  app.post("/dashboard/api/merchants", async (c) => {
-    const body = await parseJson(c, createMerchantSchema);
-    const merchant = await merchantService.createMerchant(body.name);
-    return c.json(
-      {
-        id: merchant.id,
-        name: merchant.name,
-        status: merchant.status,
-        createdAt: merchant.createdAt.toISOString(),
-        updatedAt: merchant.updatedAt.toISOString()
-      },
-      201
-    );
-  });
-
-  app.post("/dashboard/api/merchants/:merchantId/api-keys", async (c) => {
-    const result = await merchantService.createApiKey(c.req.param("merchantId"));
+  app.post("/dashboard/api/api-keys", async (c) => {
+    const merchant = await getOwnerMerchant();
+    const result = await merchantService.createApiKey(merchant.id);
     return c.json(result, 201);
   });
 
-  app.put("/dashboard/api/merchants/:merchantId/webhook", async (c) => {
+  app.put("/dashboard/api/webhook", async (c) => {
+    const merchant = await getOwnerMerchant();
     const body = await parseJson(c, configureWebhookSchema);
-    return c.json(await merchantService.configureWebhook(c.req.param("merchantId"), body.url, body.secret, body.active));
+    return c.json(await merchantService.configureWebhook(merchant.id, body.url, body.secret, body.active));
   });
 
   app.post("/dashboard/api/wallets/gas", async (c) => {
@@ -157,13 +149,15 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   });
 
   app.post("/dashboard/api/wallets/treasury", async (c) => {
+    const merchant = await getOwnerMerchant();
     const body = await parseJson(c, generateTreasuryWalletSchema);
-    return c.json(await dashboardService.generateTreasuryWallet(body), 201);
+    return c.json(await dashboardService.generateTreasuryWallet({ ...body, merchantId: merchant.id }), 201);
   });
 
   app.post("/dashboard/api/treasury-wallets", async (c) => {
+    const merchant = await getOwnerMerchant();
     const body = await parseJson(c, registerTreasuryWalletSchema);
-    return c.json(await dashboardService.registerTreasuryWallet(body));
+    return c.json(await dashboardService.registerTreasuryWallet({ ...body, merchantId: merchant.id }));
   });
 
   app.post("/dashboard/api/wallet-transactions", async (c) => {
@@ -175,45 +169,47 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
 
   app.use("/admin/*", adminAuthMiddleware(config.adminApiKey));
 
-  app.post("/admin/merchants", async (c) => {
-    const body = await parseJson(c, createMerchantSchema);
-    const merchant = await merchantService.createMerchant(body.name);
-    return c.json(
-      {
-        id: merchant.id,
-        name: merchant.name,
-        status: merchant.status,
-        createdAt: merchant.createdAt.toISOString()
-      },
-      201
-    );
+  app.get("/admin/owner", async (c) => {
+    const merchant = await getOwnerMerchant();
+    return c.json({
+      id: merchant.id,
+      name: merchant.name,
+      status: merchant.status,
+      createdAt: merchant.createdAt.toISOString(),
+      updatedAt: merchant.updatedAt.toISOString()
+    });
   });
 
-  app.post("/admin/merchants/:merchantId/api-keys", async (c) => {
-    const result = await merchantService.createApiKey(c.req.param("merchantId"));
+  app.post("/admin/api-keys", async (c) => {
+    const merchant = await getOwnerMerchant();
+    const result = await merchantService.createApiKey(merchant.id);
     return c.json(result, 201);
   });
 
-  app.post("/admin/merchants/:merchantId/api-keys/:apiKeyId/rotate", async (c) => {
-    const result = await merchantService.rotateApiKey(c.req.param("merchantId"), c.req.param("apiKeyId"));
+  app.post("/admin/api-keys/:apiKeyId/rotate", async (c) => {
+    const merchant = await getOwnerMerchant();
+    const result = await merchantService.rotateApiKey(merchant.id, c.req.param("apiKeyId"));
     return c.json(result);
   });
 
-  app.post("/admin/merchants/:merchantId/api-keys/:apiKeyId/revoke", async (c) => {
-    const result = await merchantService.revokeApiKey(c.req.param("merchantId"), c.req.param("apiKeyId"));
+  app.post("/admin/api-keys/:apiKeyId/revoke", async (c) => {
+    const merchant = await getOwnerMerchant();
+    const result = await merchantService.revokeApiKey(merchant.id, c.req.param("apiKeyId"));
     return c.json(result);
   });
 
-  app.put("/admin/merchants/:merchantId/webhook", async (c) => {
+  app.put("/admin/webhook", async (c) => {
+    const merchant = await getOwnerMerchant();
     const body = await parseJson(c, configureWebhookSchema);
-    const result = await merchantService.configureWebhook(c.req.param("merchantId"), body.url, body.secret, body.active);
+    const result = await merchantService.configureWebhook(merchant.id, body.url, body.secret, body.active);
     return c.json(result);
   });
 
-  app.put("/admin/merchants/:merchantId/treasury-wallets", async (c) => {
+  app.put("/admin/treasury-wallets", async (c) => {
+    const merchant = await getOwnerMerchant();
     const body = await parseJson(c, configureTreasuryWalletSchema);
     const result = await merchantService.configureTreasuryWallet(
-      c.req.param("merchantId"),
+      merchant.id,
       body.network,
       body.token,
       body.address
@@ -257,6 +253,8 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
       merchantId: auth.merchant.id,
       network: body.network,
       token: body.token,
+      callbackUrl: body.callbackUrl,
+      callbackSecret: body.callbackSecret,
       ttlSeconds: body.ttlSeconds,
       externalId: body.externalId,
       metadata: body.metadata,

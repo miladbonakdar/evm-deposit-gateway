@@ -288,6 +288,8 @@ export class MemoryRepository implements Repository {
       token: input.token,
       address: input.address,
       privateKeyEncrypted: input.privateKeyEncrypted,
+      callbackUrl: input.callbackUrl,
+      callbackSecretEncrypted: input.callbackSecretEncrypted,
       status: "active",
       expiresAt: input.expiresAt,
       externalId: input.externalId,
@@ -578,6 +580,7 @@ export class MemoryRepository implements Repository {
     const timestamp = now();
     const event: WebhookEvent = {
       ...input,
+      depositAddressId: input.depositAddressId ?? null,
       status: "pending",
       attempts: 0,
       nextAttemptAt: timestamp,

@@ -1,0 +1,123 @@
+{
+  "networks": {
+    "ethereum": {
+      "confirmations": 12,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "1000",
+      "minGasWei": "2000000000000000",
+      "gasTopUpWei": "5000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "bsc": {
+      "confirmations": 20,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "2000",
+      "minGasWei": "2000000000000000",
+      "gasTopUpWei": "5000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 18
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 18
+        }
+      }
+    },
+    "polygon": {
+      "confirmations": 128,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "5000",
+      "minGasWei": "20000000000000000",
+      "gasTopUpWei": "50000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "arbitrum": {
+      "confirmations": 64,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "5000",
+      "minGasWei": "2000000000000000",
+      "gasTopUpWei": "5000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "optimism": {
+      "confirmations": 64,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "5000",
+      "minGasWei": "2000000000000000",
+      "gasTopUpWei": "5000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "base": {
+      "confirmations": 64,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "5000",
+      "minGasWei": "2000000000000000",
+      "gasTopUpWei": "5000000000000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    },
+    "tron": {
+      "confirmations": 20,
+      "scanFromBlock": "0",
+      "maxScanBlocks": "500",
+      "minGasWei": "5000000",
+      "gasTopUpWei": "10000000",
+      "tokens": {
+        "USDT": {
+          "contractAddress": "",
+          "decimals": 6
+        },
+        "USDC": {
+          "contractAddress": "",
+          "decimals": 6
+        }
+      }
+    }
+  }
+}

@@ -21,14 +21,14 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
       version: "0.1.0",
       description: "Temporary USDT/USDC deposit addresses for supported EVM networks."
     },
-    security: [{ MerchantHmac: [] }],
+    security: [{ ClientHmac: [] }],
     components: {
       securitySchemes: {
         AdminBearer: {
           type: "http",
           scheme: "bearer"
         },
-        MerchantHmac: {
+        ClientHmac: {
           type: "apiKey",
           in: "header",
           name: "X-Signature",
@@ -46,37 +46,76 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
           }
         }
       },
-      "/admin/merchants": {
-        post: {
+      "/admin/owner": {
+        get: {
           security: [{ AdminBearer: [] }],
-          summary: "Create merchant",
-          responses: { "201": { description: "Merchant created" } }
+          summary: "Fetch the configured owner account",
+          responses: { "200": { description: "Owner account" } }
         }
       },
-      "/admin/merchants/{merchantId}/api-keys": {
+      "/admin/api-keys": {
         post: {
           security: [{ AdminBearer: [] }],
-          summary: "Create merchant API key",
+          summary: "Create owner API key",
           responses: { "201": { description: "API key and one-time secret" } }
         }
       },
-      "/admin/merchants/{merchantId}/webhook": {
+      "/admin/api-keys/{apiKeyId}/rotate": {
+        post: {
+          security: [{ AdminBearer: [] }],
+          summary: "Rotate owner API key secret",
+          responses: { "200": { description: "API key and one-time secret" } }
+        }
+      },
+      "/admin/api-keys/{apiKeyId}/revoke": {
+        post: {
+          security: [{ AdminBearer: [] }],
+          summary: "Revoke owner API key",
+          responses: { "200": { description: "API key status" } }
+        }
+      },
+      "/admin/webhook": {
         put: {
           security: [{ AdminBearer: [] }],
-          summary: "Configure merchant webhook",
+          summary: "Configure fallback owner webhook",
           responses: { "200": { description: "Webhook configuration" } }
         }
       },
-      "/admin/merchants/{merchantId}/treasury-wallets": {
+      "/admin/treasury-wallets": {
         put: {
           security: [{ AdminBearer: [] }],
-          summary: "Configure merchant treasury wallet",
+          summary: "Configure owner treasury wallet",
           responses: { "200": { description: "Treasury wallet" } }
         }
       },
       "/v1/deposit-addresses": {
         post: {
           summary: "Create a temporary deposit address",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["network", "token", "callbackUrl", "callbackSecret"],
+                  properties: {
+                    network: { type: "string" },
+                    token: { type: "string", enum: ["USDT", "USDC"] },
+                    callbackUrl: { type: "string", format: "uri" },
+                    callbackSecret: {
+                      type: "string",
+                      minLength: 16,
+                      description: "Per-deposit webhook signing secret. Stored encrypted and never returned."
+                    },
+                    ttlSeconds: { type: "integer", minimum: 60, maximum: 2592000 },
+                    externalId: { type: "string" },
+                    metadata: { type: "object" },
+                    qrFormat: { type: "string", enum: ["none", "pngDataUrl", "svg", "base64"] }
+                  }
+                }
+              }
+            }
+          },
           responses: { "201": { description: "Deposit address with optional QR data" } }
         }
       },
