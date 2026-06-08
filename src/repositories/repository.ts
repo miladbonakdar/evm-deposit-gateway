@@ -1,291 +1,39 @@
-import type {
-  ApiKeyStatus,
-  ChainAddress,
-  ChainCursor,
-  ChainTxHash,
-  DepositAddress,
-  GasTopUp,
-  IdempotencyRecord,
-  Merchant,
-  MerchantApiKey,
-  NetworkSlug,
-  NotificationPreferences,
-  OperationalWallet,
-  OperationalWalletPurpose,
-  SettlementStatus,
-  SettlementStep,
-  Sweep,
-  TokenSymbol,
-  TokenTransfer,
-  TransactionStatus,
-  TreasuryWallet,
-  TransferStatus,
-  WebhookConfig,
-  WebhookEvent,
-  WebhookEventType,
-  WalletTransaction,
-  WalletTransactionAsset
-} from "../types/domain.js";
-
-export interface CreateMerchantInput {
-  id: string;
-  name: string;
-}
-
-export interface CreateApiKeyInput {
-  id: string;
-  merchantId: string;
-  publicKey: string;
-  secretEncrypted: string;
-}
-
-export interface UpsertWebhookConfigInput {
-  merchantId: string;
-  url: string;
-  secretEncrypted: string;
-  active: boolean;
-}
-
-export interface UpsertNotificationPreferencesInput {
-  merchantId: string;
-  enabledEvents: WebhookEventType[];
-}
-
-export interface UpsertTreasuryWalletInput {
-  id: string;
-  merchantId: string;
-  network: NetworkSlug;
-  token: TokenSymbol;
-  address: ChainAddress;
-  label: string;
-  isDefault?: boolean;
-  operationalWalletId?: string | null;
-}
-
-export interface UpsertOperationalWalletInput {
-  id: string;
-  scopeKey: string;
-  merchantId: string | null;
-  purpose: OperationalWalletPurpose;
-  network: NetworkSlug;
-  token: TokenSymbol | null;
-  address: ChainAddress;
-  privateKeyEncrypted: string;
-  label: string;
-}
-
-export interface CreateDepositAddressInput {
-  id: string;
-  merchantId: string;
-  network: NetworkSlug;
-  token: TokenSymbol;
-  address: ChainAddress;
-  privateKeyEncrypted: string;
-  treasuryWalletId: string;
-  callbackUrl: string;
-  callbackSecretEncrypted: string;
-  expiresAt: Date;
-  externalId: string | null;
-  metadata: unknown;
-}
-
-export interface CreateTokenTransferInput {
-  id: string;
-  merchantId: string;
-  depositAddressId: string;
-  network: NetworkSlug;
-  token: TokenSymbol;
-  txHash: ChainTxHash;
-  logIndex: number;
-  fromAddress: ChainAddress;
-  toAddress: ChainAddress;
-  amountRaw: string;
-  amountFormatted: string;
-  blockNumber: bigint;
-  blockHash: ChainTxHash | null;
-  confirmations: number;
-  status: TransferStatus;
-}
-
-export interface CreateGasTopUpInput {
-  id: string;
-  transferId: string;
-  merchantId: string;
-  depositAddressId: string;
-  network: NetworkSlug;
-  txHash: ChainTxHash | null;
-  amountWei: string;
-  attemptNumber: number;
-  status: TransactionStatus;
-  failureReason?: string | null;
-}
-
-export interface CreateSweepInput {
-  id: string;
-  transferId: string;
-  merchantId: string;
-  depositAddressId: string;
-  network: NetworkSlug;
-  token: TokenSymbol;
-  txHash: ChainTxHash | null;
-  amountRaw: string;
-  amountFormatted: string;
-  toAddress: ChainAddress;
-  attemptNumber: number;
-  status: TransactionStatus;
-  failureReason?: string | null;
-}
-
-export interface CreateWalletTransactionInput {
-  id: string;
-  merchantId: string | null;
-  sourceWalletId: string;
-  network: NetworkSlug;
-  token: TokenSymbol | null;
-  asset: WalletTransactionAsset;
-  txHash: ChainTxHash | null;
-  fromAddress: ChainAddress;
-  toAddress: ChainAddress;
-  amountRaw: string;
-  amountFormatted: string;
-  status: TransactionStatus;
-  failureReason?: string | null;
-}
-
-export interface CreateWebhookEventInput {
-  id: string;
-  merchantId: string;
-  depositAddressId?: string | null;
-  type: WebhookEventType;
-  url: string;
-  secretEncrypted: string;
-  payload: Record<string, unknown>;
-}
-
-export interface CreateIdempotencyInput {
-  id: string;
-  merchantId: string;
-  route: string;
-  key: string;
-  requestHash: string;
-  responseStatus: number;
-  responseBody: unknown;
-}
-
-export interface ListDepositsFilter {
-  status?: TransferStatus;
-  limit: number;
-  cursor?: string;
-}
-
-export interface ListDepositAddressesFilter {
-  merchantId?: string;
-  status?: DepositAddress["status"];
-  limit: number;
-}
-
-export interface ListTreasuryWalletsFilter {
-  merchantId?: string;
-  network?: NetworkSlug;
-  token?: TokenSymbol;
-  limit: number;
-}
-
-export interface ListOperationalWalletsFilter {
-  merchantId?: string;
-  purpose?: OperationalWalletPurpose;
-  network?: NetworkSlug;
-  token?: TokenSymbol;
-  includeDisabled?: boolean;
-  limit: number;
-}
-
-export interface ListTransfersFilter {
-  merchantId?: string;
-  status?: TransferStatus;
-  limit: number;
-}
-
-export interface UpdateTransferSettlementInput {
-  settlementStatus: SettlementStatus;
-  settlementStep?: SettlementStep | null;
-  settlementFailureReason?: string | null;
-}
-
+import type { ApiKeyStatus, ChainAddress, ChainCursor, ChainTxHash, DepositAddress, DepositFlow, DepositMatchSource, DepositMatchStatus, GasTopUp, IdempotencyRecord, Merchant, MerchantApiKey, NetworkSlug, NotificationPreferences, OperationalWallet, OperationalWalletPurpose, SettlementStatus, SettlementStep, Sweep, TokenSymbol, TokenTransfer, TransactionStatus, TreasuryTransfer, TreasuryTransferStatus, TreasuryWallet, TransferStatus, WebhookConfig, WebhookEvent, WebhookEventType, WalletTransaction, WalletTransactionAsset } from "../types/domain.js";
+export interface CreateMerchantInput { id: string; name: string; rejectDuplicateClientPendingDeposits?: boolean; }
+export interface UpdateMerchantSettingsInput { rejectDuplicateClientPendingDeposits: boolean; }
+export interface CreateApiKeyInput { id: string; merchantId: string; publicKey: string; secretEncrypted: string; }
+export interface UpsertWebhookConfigInput { merchantId: string; url: string; secretEncrypted: string; active: boolean; }
+export interface UpsertNotificationPreferencesInput { merchantId: string; enabledEvents: WebhookEventType[]; }
+export interface UpsertTreasuryWalletInput { id: string; merchantId: string; network: NetworkSlug; token: TokenSymbol; address: ChainAddress; label: string; isDefault?: boolean; operationalWalletId?: string | null; }
+export interface UpsertOperationalWalletInput { id: string; scopeKey: string; merchantId: string | null; purpose: OperationalWalletPurpose; network: NetworkSlug; token: TokenSymbol | null; address: ChainAddress; privateKeyEncrypted: string; label: string; }
+export interface CreateDepositAddressInput { id: string; merchantId: string; network: NetworkSlug; token: TokenSymbol; address: ChainAddress; privateKeyEncrypted: string | null; treasuryWalletId: string | null; callbackUrl: string | null; callbackSecretEncrypted: string | null; flow: DepositFlow; clientId: string; requestedAmountRaw?: string | null; requestedAmountFormatted?: string | null; receivedAmountRaw?: string | null; receivedAmountFormatted?: string | null; matchStatus?: DepositMatchStatus | null; matchedTransferId?: string | null; matchSource?: DepositMatchSource | null; matchedAt?: Date | null; expiresAt: Date; externalId: string | null; metadata: unknown; }
+export interface CreateTokenTransferInput { id: string; merchantId: string; depositAddressId: string; network: NetworkSlug; token: TokenSymbol; txHash: ChainTxHash; logIndex: number; fromAddress: ChainAddress; toAddress: ChainAddress; amountRaw: string; amountFormatted: string; blockNumber: bigint; blockHash: ChainTxHash | null; confirmations: number; status: TransferStatus; }
+export interface CreateTreasuryTransferInput { id: string; merchantId: string; treasuryWalletId: string; network: NetworkSlug; token: TokenSymbol; txHash: ChainTxHash; logIndex: number; fromAddress: ChainAddress; toAddress: ChainAddress; amountRaw: string; amountFormatted: string; blockNumber: bigint; blockHash: ChainTxHash | null; confirmations: number; status: TreasuryTransferStatus; candidateDepositAddressIds: string[]; }
+export interface CreateGasTopUpInput { id: string; transferId: string; merchantId: string; depositAddressId: string; network: NetworkSlug; txHash: ChainTxHash | null; amountWei: string; attemptNumber: number; status: TransactionStatus; failureReason?: string | null; }
+export interface CreateSweepInput { id: string; transferId: string; merchantId: string; depositAddressId: string; network: NetworkSlug; token: TokenSymbol; txHash: ChainTxHash | null; amountRaw: string; amountFormatted: string; toAddress: ChainAddress; attemptNumber: number; status: TransactionStatus; failureReason?: string | null; }
+export interface CreateWalletTransactionInput { id: string; merchantId: string | null; sourceWalletId: string; network: NetworkSlug; token: TokenSymbol | null; asset: WalletTransactionAsset; txHash: ChainTxHash | null; fromAddress: ChainAddress; toAddress: ChainAddress; amountRaw: string; amountFormatted: string; status: TransactionStatus; failureReason?: string | null; }
+export interface CreateWebhookEventInput { id: string; merchantId: string; depositAddressId?: string | null; type: WebhookEventType; url: string; secretEncrypted: string; payload: Record<string, unknown>; }
+export interface CreateIdempotencyInput { id: string; merchantId: string; route: string; key: string; requestHash: string; responseStatus: number; responseBody: unknown; }
+export interface ListDepositsFilter { status?: TransferStatus; limit: number; cursor?: string; }
+export interface ListDepositAddressesFilter { merchantId?: string; status?: DepositAddress["status"]; flow?: DepositFlow; matchStatus?: DepositMatchStatus; network?: NetworkSlug; token?: TokenSymbol; treasuryWalletId?: string; clientId?: string; limit: number; }
+export interface ListTreasuryWalletsFilter { merchantId?: string; network?: NetworkSlug; token?: TokenSymbol; limit: number; }
+export interface ListOperationalWalletsFilter { merchantId?: string; purpose?: OperationalWalletPurpose; network?: NetworkSlug; token?: TokenSymbol; includeDisabled?: boolean; limit: number; }
+export interface ListTransfersFilter { merchantId?: string; status?: TransferStatus; limit: number; }
+export interface ListTreasuryTransfersFilter { merchantId?: string; status?: TreasuryTransferStatus; network?: NetworkSlug; token?: TokenSymbol; limit: number; }
+export interface UpdateTransferSettlementInput { settlementStatus: SettlementStatus; settlementStep?: SettlementStep | null; settlementFailureReason?: string | null; }
+export interface MarkDepositAddressMatchedInput { transferId: string; receivedAmountRaw: string; receivedAmountFormatted: string; matchSource: DepositMatchSource; matchedAt: Date; }
 export interface Repository {
-  createMerchant(input: CreateMerchantInput): Promise<Merchant>;
-  getMerchant(id: string): Promise<Merchant | null>;
-  listMerchants(limit: number): Promise<Merchant[]>;
-  createApiKey(input: CreateApiKeyInput): Promise<MerchantApiKey>;
-  getApiKeyByPublicKey(publicKey: string): Promise<MerchantApiKey | null>;
-  listApiKeys(merchantId: string | undefined, limit: number): Promise<MerchantApiKey[]>;
-  updateApiKeyLastUsed(id: string, usedAt: Date): Promise<void>;
-  updateApiKeySecret(id: string, secretEncrypted: string): Promise<MerchantApiKey | null>;
-  updateApiKeyStatus(id: string, status: ApiKeyStatus): Promise<MerchantApiKey | null>;
-  insertRequestNonce(apiKeyId: string, nonce: string, timestamp: Date): Promise<boolean>;
-
-  upsertWebhookConfig(input: UpsertWebhookConfigInput): Promise<WebhookConfig>;
-  getWebhookConfig(merchantId: string): Promise<WebhookConfig | null>;
-  listWebhookConfigs(limit: number): Promise<WebhookConfig[]>;
-  upsertNotificationPreferences(input: UpsertNotificationPreferencesInput): Promise<NotificationPreferences>;
-  getNotificationPreferences(merchantId: string): Promise<NotificationPreferences | null>;
-  upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet>;
-  getTreasuryWallet(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<TreasuryWallet | null>;
-  getTreasuryWalletById(merchantId: string, id: string): Promise<TreasuryWallet | null>;
-  listTreasuryWallets(filter: ListTreasuryWalletsFilter): Promise<TreasuryWallet[]>;
-  setDefaultTreasuryWallet(merchantId: string, id: string): Promise<TreasuryWallet | null>;
-  upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet>;
-  getOperationalWallet(id: string): Promise<OperationalWallet | null>;
-  getOperationalGasWallet(network: NetworkSlug): Promise<OperationalWallet | null>;
-  listOperationalWallets(filter: ListOperationalWalletsFilter): Promise<OperationalWallet[]>;
-
-  createDepositAddress(input: CreateDepositAddressInput): Promise<DepositAddress>;
-  getDepositAddressForMerchant(merchantId: string, id: string): Promise<DepositAddress | null>;
-  getDepositAddressByAddress(network: NetworkSlug, token: TokenSymbol, address: ChainAddress): Promise<DepositAddress | null>;
-  listDepositAddresses(filter: ListDepositAddressesFilter): Promise<DepositAddress[]>;
-  expireDepositAddresses(now: Date): Promise<DepositAddress[]>;
-
-  getChainCursor(network: NetworkSlug, token: TokenSymbol): Promise<ChainCursor | null>;
-  upsertChainCursor(network: NetworkSlug, token: TokenSymbol, lastScannedBlock: bigint): Promise<ChainCursor>;
-  createTokenTransferIfNotExists(input: CreateTokenTransferInput): Promise<{ transfer: TokenTransfer; created: boolean }>;
-  getTokenTransfer(id: string): Promise<TokenTransfer | null>;
-  listTransfersForDepositAddress(depositAddressId: string): Promise<TokenTransfer[]>;
-  listTransfersForMerchant(merchantId: string, filter: ListDepositsFilter): Promise<TokenTransfer[]>;
-  listTokenTransfers(filter: ListTransfersFilter): Promise<TokenTransfer[]>;
-  listTransfersReadyForConfirmation(network: NetworkSlug, token: TokenSymbol, maxBlockNumber: bigint): Promise<TokenTransfer[]>;
-  markTransferConfirmed(id: string, confirmations: number, confirmedAt: Date): Promise<TokenTransfer | null>;
-  updateTransferSettlement(id: string, input: UpdateTransferSettlementInput): Promise<TokenTransfer | null>;
-
-  getLatestGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null>;
-  createGasTopUp(input: CreateGasTopUpInput): Promise<GasTopUp>;
-  listSubmittedGasTopUps(limit: number): Promise<GasTopUp[]>;
-  listGasTopUps(limit: number): Promise<GasTopUp[]>;
-  updateGasTopUpStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<GasTopUp | null>;
-
-  getLatestSweepByTransfer(transferId: string): Promise<Sweep | null>;
-  createSweep(input: CreateSweepInput): Promise<Sweep>;
-  listSubmittedSweeps(limit: number): Promise<Sweep[]>;
-  listSweeps(limit: number): Promise<Sweep[]>;
-  updateSweepStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<Sweep | null>;
-
-  createWalletTransaction(input: CreateWalletTransactionInput): Promise<WalletTransaction>;
-  listWalletTransactions(limit: number): Promise<WalletTransaction[]>;
-  listSubmittedWalletTransactions(limit: number): Promise<WalletTransaction[]>;
-  updateWalletTransactionStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<WalletTransaction | null>;
-
-  createWebhookEvent(input: CreateWebhookEventInput): Promise<WebhookEvent>;
-  listDueWebhookEvents(now: Date, limit: number): Promise<WebhookEvent[]>;
-  listWebhookEvents(limit: number): Promise<WebhookEvent[]>;
-  markWebhookSent(id: string, responseStatus: number, sentAt: Date): Promise<WebhookEvent | null>;
-  markWebhookRetry(
-    id: string,
-    attempts: number,
-    status: "pending" | "failed",
-    nextAttemptAt: Date,
-    error: string,
-    responseStatus: number | null
-  ): Promise<WebhookEvent | null>;
-
-  getIdempotencyRecord(merchantId: string, route: string, key: string): Promise<IdempotencyRecord | null>;
-  createIdempotencyRecord(input: CreateIdempotencyInput): Promise<IdempotencyRecord>;
+  createMerchant(input: CreateMerchantInput): Promise<Merchant>; getMerchant(id: string): Promise<Merchant | null>; listMerchants(limit: number): Promise<Merchant[]>; updateMerchantSettings(merchantId: string, input: UpdateMerchantSettingsInput): Promise<Merchant | null>;
+  createApiKey(input: CreateApiKeyInput): Promise<MerchantApiKey>; getApiKeyByPublicKey(publicKey: string): Promise<MerchantApiKey | null>; listApiKeys(merchantId: string | undefined, limit: number): Promise<MerchantApiKey[]>; updateApiKeyLastUsed(id: string, usedAt: Date): Promise<void>; updateApiKeySecret(id: string, secretEncrypted: string): Promise<MerchantApiKey | null>; updateApiKeyStatus(id: string, status: ApiKeyStatus): Promise<MerchantApiKey | null>; insertRequestNonce(apiKeyId: string, nonce: string, timestamp: Date): Promise<boolean>;
+  upsertWebhookConfig(input: UpsertWebhookConfigInput): Promise<WebhookConfig>; getWebhookConfig(merchantId: string): Promise<WebhookConfig | null>; listWebhookConfigs(limit: number): Promise<WebhookConfig[]>; upsertNotificationPreferences(input: UpsertNotificationPreferencesInput): Promise<NotificationPreferences>; getNotificationPreferences(merchantId: string): Promise<NotificationPreferences | null>;
+  upsertTreasuryWallet(input: UpsertTreasuryWalletInput): Promise<TreasuryWallet>; getTreasuryWallet(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<TreasuryWallet | null>; getTreasuryWalletById(merchantId: string, id: string): Promise<TreasuryWallet | null>; listTreasuryWalletsByAddress(network: NetworkSlug, token: TokenSymbol, address: ChainAddress): Promise<TreasuryWallet[]>; listTreasuryWallets(filter: ListTreasuryWalletsFilter): Promise<TreasuryWallet[]>; countActiveDirectDepositRequestsByTreasury(merchantId: string, network: NetworkSlug, token: TokenSymbol): Promise<Map<string, number>>; setDefaultTreasuryWallet(merchantId: string, id: string): Promise<TreasuryWallet | null>;
+  upsertOperationalWallet(input: UpsertOperationalWalletInput): Promise<OperationalWallet>; getOperationalWallet(id: string): Promise<OperationalWallet | null>; getOperationalGasWallet(network: NetworkSlug): Promise<OperationalWallet | null>; listOperationalWallets(filter: ListOperationalWalletsFilter): Promise<OperationalWallet[]>;
+  createDepositAddress(input: CreateDepositAddressInput): Promise<DepositAddress>; getDepositAddressForMerchant(merchantId: string, id: string): Promise<DepositAddress | null>; getActiveDepositAddressByClientId(merchantId: string, clientId: string): Promise<DepositAddress | null>; getDepositAddressByAddress(network: NetworkSlug, token: TokenSymbol, address: ChainAddress): Promise<DepositAddress | null>; listDepositAddresses(filter: ListDepositAddressesFilter): Promise<DepositAddress[]>; markDepositAddressMatched(id: string, input: MarkDepositAddressMatchedInput): Promise<DepositAddress | null>; closeDepositAddress(merchantId: string, id: string, closedAt: Date): Promise<DepositAddress | null>; expireDepositAddresses(now: Date): Promise<DepositAddress[]>;
+  getChainCursor(network: NetworkSlug, token: TokenSymbol): Promise<ChainCursor | null>; upsertChainCursor(network: NetworkSlug, token: TokenSymbol, lastScannedBlock: bigint): Promise<ChainCursor>;
+  createTokenTransferIfNotExists(input: CreateTokenTransferInput): Promise<{ transfer: TokenTransfer; created: boolean }>; getTokenTransfer(id: string): Promise<TokenTransfer | null>; getTokenTransferByChainLog(network: NetworkSlug, txHash: ChainTxHash, logIndex: number): Promise<TokenTransfer | null>; listTransfersForDepositAddress(depositAddressId: string): Promise<TokenTransfer[]>; listTransfersForMerchant(merchantId: string, filter: ListDepositsFilter): Promise<TokenTransfer[]>; listTokenTransfers(filter: ListTransfersFilter): Promise<TokenTransfer[]>; listTransfersReadyForConfirmation(network: NetworkSlug, token: TokenSymbol, maxBlockNumber: bigint): Promise<TokenTransfer[]>; markTransferConfirmed(id: string, confirmations: number, confirmedAt: Date): Promise<TokenTransfer | null>; updateTransferSettlement(id: string, input: UpdateTransferSettlementInput): Promise<TokenTransfer | null>;
+  createTreasuryTransferIfNotExists(input: CreateTreasuryTransferInput): Promise<{ transfer: TreasuryTransfer; created: boolean }>; getTreasuryTransfer(id: string): Promise<TreasuryTransfer | null>; listTreasuryTransfers(filter: ListTreasuryTransfersFilter): Promise<TreasuryTransfer[]>; updateTreasuryTransferStatus(id: string, status: TreasuryTransferStatus, matchedDepositAddressId?: string | null, matchSource?: DepositMatchSource | null, matchedAt?: Date | null): Promise<TreasuryTransfer | null>;
+  getSweepByTxHash(network: NetworkSlug, token: TokenSymbol, txHash: ChainTxHash): Promise<Sweep | null>; getLatestGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null>; createGasTopUp(input: CreateGasTopUpInput): Promise<GasTopUp>; listSubmittedGasTopUps(limit: number): Promise<GasTopUp[]>; listGasTopUps(limit: number): Promise<GasTopUp[]>; updateGasTopUpStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<GasTopUp | null>; getLatestSweepByTransfer(transferId: string): Promise<Sweep | null>; createSweep(input: CreateSweepInput): Promise<Sweep>; listSubmittedSweeps(limit: number): Promise<Sweep[]>; listSweeps(limit: number): Promise<Sweep[]>; updateSweepStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<Sweep | null>;
+  createWalletTransaction(input: CreateWalletTransactionInput): Promise<WalletTransaction>; listWalletTransactions(limit: number): Promise<WalletTransaction[]>; listSubmittedWalletTransactions(limit: number): Promise<WalletTransaction[]>; updateWalletTransactionStatus(id: string, status: TransactionStatus, txHash: ChainTxHash | null, failureReason?: string | null): Promise<WalletTransaction | null>;
+  createWebhookEvent(input: CreateWebhookEventInput): Promise<WebhookEvent>; listDueWebhookEvents(now: Date, limit: number): Promise<WebhookEvent[]>; listWebhookEvents(limit: number): Promise<WebhookEvent[]>; markWebhookSent(id: string, responseStatus: number, sentAt: Date): Promise<WebhookEvent | null>; markWebhookRetry(id: string, attempts: number, status: "pending" | "failed", nextAttemptAt: Date, error: string, responseStatus: number | null): Promise<WebhookEvent | null>;
+  getIdempotencyRecord(merchantId: string, route: string, key: string): Promise<IdempotencyRecord | null>; createIdempotencyRecord(input: CreateIdempotencyInput): Promise<IdempotencyRecord>;
 }

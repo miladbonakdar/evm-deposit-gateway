@@ -17,6 +17,7 @@ export const merchants = pgTable("merchants", {
   id: uuid("id").primaryKey(),
   name: text("name").notNull(),
   status: text("status").notNull().default("active"),
+  rejectDuplicateClientPendingDeposits: boolean("reject_duplicate_client_pending_deposits").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
@@ -139,11 +140,21 @@ export const depositAddresses = pgTable(
     network: text("network").notNull(),
     token: text("token").notNull(),
     address: text("address").notNull(),
-    privateKeyEncrypted: text("private_key_encrypted").notNull(),
+    privateKeyEncrypted: text("private_key_encrypted"),
     treasuryWalletId: uuid("treasury_wallet_id").references(() => treasuryWallets.id, { onDelete: "set null" }),
     callbackUrl: text("callback_url"),
     callbackSecretEncrypted: text("callback_secret_encrypted"),
     status: text("status").notNull().default("active"),
+    flow: text("flow").notNull().default("temporary_wallet"),
+    clientId: text("client_id").notNull(),
+    requestedAmountRaw: text("requested_amount_raw"),
+    requestedAmountFormatted: text("requested_amount_formatted"),
+    receivedAmountRaw: text("received_amount_raw"),
+    receivedAmountFormatted: text("received_amount_formatted"),
+    matchStatus: text("match_status"),
+    matchedTransferId: uuid("matched_transfer_id"),
+    matchSource: text("match_source"),
+    matchedAt: timestamp("matched_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     externalId: text("external_id"),
     metadata: jsonb("metadata").notNull().default({}),
@@ -151,13 +162,21 @@ export const depositAddresses = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => ({
-    addressAssetUnique: uniqueIndex("deposit_addresses_address_asset_unique").on(
+    addressAssetUnique: uniqueIndex("deposit_addresses_address_asset_unique")
+      .on(table.network, table.token, table.address)
+      .where(sql`${table.flow} = 'temporary_wallet'`),
+    merchantIdx: index("deposit_addresses_merchant_idx").on(table.merchantId),
+    externalIdx: index("deposit_addresses_external_idx").on(table.merchantId, table.externalId),
+    clientStatusIdx: index("deposit_addresses_client_status_idx").on(table.merchantId, table.clientId, table.status),
+    directMatchIdx: index("deposit_addresses_direct_match_idx").on(
+      table.merchantId,
       table.network,
       table.token,
-      table.address
-    ),
-    merchantIdx: index("deposit_addresses_merchant_idx").on(table.merchantId),
-    externalIdx: index("deposit_addresses_external_idx").on(table.merchantId, table.externalId)
+      table.treasuryWalletId,
+      table.flow,
+      table.status,
+      table.matchStatus
+    )
   })
 );
 
@@ -207,6 +226,44 @@ export const tokenTransfers = pgTable(
     chainLogUnique: uniqueIndex("token_transfers_chain_log_unique").on(table.network, table.txHash, table.logIndex),
     depositIdx: index("token_transfers_deposit_idx").on(table.depositAddressId),
     statusIdx: index("token_transfers_status_idx").on(table.status)
+  })
+);
+
+export const treasuryTransfers = pgTable(
+  "treasury_transfers",
+  {
+    id: uuid("id").primaryKey(),
+    merchantId: uuid("merchant_id")
+      .notNull()
+      .references(() => merchants.id, { onDelete: "cascade" }),
+    treasuryWalletId: uuid("treasury_wallet_id")
+      .notNull()
+      .references(() => treasuryWallets.id, { onDelete: "cascade" }),
+    network: text("network").notNull(),
+    token: text("token").notNull(),
+    txHash: text("tx_hash").notNull(),
+    logIndex: integer("log_index").notNull(),
+    fromAddress: text("from_address").notNull(),
+    toAddress: text("to_address").notNull(),
+    amountRaw: text("amount_raw").notNull(),
+    amountFormatted: text("amount_formatted").notNull(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    blockHash: text("block_hash"),
+    confirmations: integer("confirmations").notNull().default(0),
+    status: text("status").notNull(),
+    candidateDepositAddressIds: jsonb("candidate_deposit_address_ids").notNull().default([]),
+    matchedDepositAddressId: uuid("matched_deposit_address_id").references(() => depositAddresses.id, { onDelete: "set null" }),
+    matchSource: text("match_source"),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
+    matchedAt: timestamp("matched_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    chainLogUnique: uniqueIndex("treasury_transfers_chain_log_unique").on(table.network, table.txHash, table.logIndex),
+    merchantIdx: index("treasury_transfers_merchant_idx").on(table.merchantId),
+    treasuryIdx: index("treasury_transfers_treasury_idx").on(table.treasuryWalletId),
+    statusIdx: index("treasury_transfers_status_idx").on(table.status)
   })
 );
 

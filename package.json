@@ -17,7 +17,9 @@
     "typecheck": "tsc --noEmit && tsc -p dashboard/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:studio": "node scripts/db-studio.mjs .env",
+    "db:studio:testnet": "node scripts/db-studio.mjs .env.testnet"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
@@ -43,6 +45,7 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^8.0.16",

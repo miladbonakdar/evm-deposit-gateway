@@ -14,9 +14,16 @@ export async function generateChainWallet(kind: NetworkKind): Promise<GeneratedC
     const account = privateKeyToAccount(privateKey);
     return { address: account.address, privateKey };
   }
-
   const account = await TronWeb.createAccount();
   return { address: account.address.base58, privateKey: account.privateKey };
+}
+
+export function privateKeyToChainAddress(kind: NetworkKind, privateKey: string): string {
+  if (kind === "evm") return privateKeyToAccount(privateKey as `0x${string}`).address;
+  const normalizedPrivateKey = privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+  const address = TronWeb.address.fromPrivateKey(normalizedPrivateKey);
+  if (!address) throw new Error("Invalid TRON private key");
+  return address;
 }
 
 export function operationalWalletScopeKey(

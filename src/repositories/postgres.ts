@@ -11,6 +11,7 @@ import {
   requestNonces,
   sweeps,
   tokenTransfers,
+  treasuryTransfers,
   treasuryWallets,
   walletTransactions,
   webhookConfigs,
@@ -22,6 +23,7 @@ import type {
   ChainTxHash,
   ChainCursor,
   DepositAddress,
+  DepositMatchSource,
   GasTopUp,
   IdempotencyRecord,
   Merchant,
@@ -33,6 +35,8 @@ import type {
   TokenSymbol,
   TokenTransfer,
   TransactionStatus,
+  TreasuryTransfer,
+  TreasuryTransferStatus,
   TreasuryWallet,
   WebhookConfig,
   WebhookEvent,
@@ -47,14 +51,18 @@ import type {
   CreateMerchantInput,
   CreateSweepInput,
   CreateTokenTransferInput,
+  CreateTreasuryTransferInput,
   CreateWebhookEventInput,
   CreateWalletTransactionInput,
   ListDepositAddressesFilter,
   ListDepositsFilter,
   ListOperationalWalletsFilter,
+  ListTreasuryTransfersFilter,
   ListTreasuryWalletsFilter,
   ListTransfersFilter,
+  MarkDepositAddressMatchedInput,
   Repository,
+  UpdateMerchantSettingsInput,
   UpdateTransferSettlementInput,
   UpsertNotificationPreferencesInput,
   UpsertOperationalWalletInput,
@@ -119,7 +127,11 @@ function mapDepositAddress(row: typeof depositAddresses.$inferSelect): DepositAd
     treasuryWalletId: row.treasuryWalletId,
     callbackUrl: row.callbackUrl,
     callbackSecretEncrypted: row.callbackSecretEncrypted,
-    status: row.status as DepositAddress["status"]
+    status: row.status as DepositAddress["status"],
+    flow: row.flow as DepositAddress["flow"],
+    matchStatus: row.matchStatus as DepositAddress["matchStatus"],
+    matchSource: row.matchSource as DepositAddress["matchSource"],
+    metadata: row.metadata
   };
 }
 
@@ -140,6 +152,23 @@ function mapTransfer(row: typeof tokenTransfers.$inferSelect): TokenTransfer {
     settlementStatus: row.settlementStatus as TokenTransfer["settlementStatus"],
     settlementStep: row.settlementStep as TokenTransfer["settlementStep"],
     settlementFailureReason: row.settlementFailureReason
+  };
+}
+
+function mapTreasuryTransfer(row: typeof treasuryTransfers.$inferSelect): TreasuryTransfer {
+  return {
+    ...row,
+    network: row.network as NetworkSlug,
+    token: row.token as TokenSymbol,
+    txHash: row.txHash,
+    fromAddress: row.fromAddress,
+    toAddress: row.toAddress,
+    blockHash: row.blockHash,
+    status: row.status as TreasuryTransferStatus,
+    candidateDepositAddressIds: Array.isArray(row.candidateDepositAddressIds)
+      ? (row.candidateDepositAddressIds as string[])
+      : [],
+    matchSource: row.matchSource as DepositMatchSource | null
   };
 }
 
@@ -203,6 +232,16 @@ export class PostgresRepository implements Repository {
   async listMerchants(limit: number): Promise<Merchant[]> {
     const rows = await this.db.select().from(merchants).orderBy(desc(merchants.createdAt)).limit(limit);
     return rows.map(mapMerchant);
+  }
+
+  async updateMerchantSettings(merchantId: string, input: UpdateMerchantSettingsInput): Promise<Merchant | null> {
+    const rows = await this.db
+      .update(merchants)
+      .set({ rejectDuplicateClientPendingDeposits: input.rejectDuplicateClientPendingDeposits, updatedAt: new Date() })
+      .where(eq(merchants.id, merchantId))
+      .returning();
+    const row = first(rows);
+    return row ? mapMerchant(row) : null;
   }
 
   async createApiKey(input: CreateApiKeyInput): Promise<MerchantApiKey> {
@@ -415,6 +454,19 @@ export class PostgresRepository implements Repository {
     return row ? mapTreasuryWallet(row) : null;
   }
 
+  async listTreasuryWalletsByAddress(
+    network: NetworkSlug,
+    token: TokenSymbol,
+    address: ChainAddress
+  ): Promise<TreasuryWallet[]> {
+    const rows = await this.db
+      .select()
+      .from(treasuryWallets)
+      .where(and(eq(treasuryWallets.network, network), eq(treasuryWallets.token, token), eq(treasuryWallets.address, address)))
+      .orderBy(desc(treasuryWallets.updatedAt));
+    return rows.map(mapTreasuryWallet);
+  }
+
   async listTreasuryWallets(filter: ListTreasuryWalletsFilter): Promise<TreasuryWallet[]> {
     const conditions = [
       filter.merchantId ? eq(treasuryWallets.merchantId, filter.merchantId) : undefined,
@@ -428,6 +480,34 @@ export class PostgresRepository implements Repository {
       .orderBy(desc(treasuryWallets.isDefault), desc(treasuryWallets.updatedAt))
       .limit(filter.limit);
     return rows.map(mapTreasuryWallet);
+  }
+
+  async countActiveDirectDepositRequestsByTreasury(
+    merchantId: string,
+    network: NetworkSlug,
+    token: TokenSymbol
+  ): Promise<Map<string, number>> {
+    const rows = await this.db
+      .select({
+        treasuryWalletId: depositAddresses.treasuryWalletId,
+        count: sql<number>`count(*)::int`
+      })
+      .from(depositAddresses)
+      .where(
+        and(
+          eq(depositAddresses.merchantId, merchantId),
+          eq(depositAddresses.network, network),
+          eq(depositAddresses.token, token),
+          eq(depositAddresses.flow, "direct_treasury"),
+          eq(depositAddresses.status, "active")
+        )
+      )
+      .groupBy(depositAddresses.treasuryWalletId);
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      if (row.treasuryWalletId) counts.set(row.treasuryWalletId, Number(row.count));
+    }
+    return counts;
   }
 
   async setDefaultTreasuryWallet(merchantId: string, id: string): Promise<TreasuryWallet | null> {
@@ -533,6 +613,23 @@ export class PostgresRepository implements Repository {
     return row ? mapDepositAddress(row) : null;
   }
 
+  async getActiveDepositAddressByClientId(merchantId: string, clientId: string): Promise<DepositAddress | null> {
+    const rows = await this.db
+      .select()
+      .from(depositAddresses)
+      .where(
+        and(
+          eq(depositAddresses.merchantId, merchantId),
+          eq(depositAddresses.clientId, clientId),
+          eq(depositAddresses.status, "active")
+        )
+      )
+      .orderBy(desc(depositAddresses.createdAt))
+      .limit(1);
+    const row = first(rows);
+    return row ? mapDepositAddress(row) : null;
+  }
+
   async getDepositAddressByAddress(
     network: NetworkSlug,
     token: TokenSymbol,
@@ -556,7 +653,13 @@ export class PostgresRepository implements Repository {
   async listDepositAddresses(filter: ListDepositAddressesFilter): Promise<DepositAddress[]> {
     const conditions = [
       filter.merchantId ? eq(depositAddresses.merchantId, filter.merchantId) : undefined,
-      filter.status ? eq(depositAddresses.status, filter.status) : undefined
+      filter.status ? eq(depositAddresses.status, filter.status) : undefined,
+      filter.flow ? eq(depositAddresses.flow, filter.flow) : undefined,
+      filter.matchStatus ? eq(depositAddresses.matchStatus, filter.matchStatus) : undefined,
+      filter.network ? eq(depositAddresses.network, filter.network) : undefined,
+      filter.token ? eq(depositAddresses.token, filter.token) : undefined,
+      filter.treasuryWalletId ? eq(depositAddresses.treasuryWalletId, filter.treasuryWalletId) : undefined,
+      filter.clientId ? eq(depositAddresses.clientId, filter.clientId) : undefined
     ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
     const rows = await this.db
       .select()
@@ -565,6 +668,38 @@ export class PostgresRepository implements Repository {
       .orderBy(desc(depositAddresses.createdAt))
       .limit(filter.limit);
     return rows.map(mapDepositAddress);
+  }
+
+  async markDepositAddressMatched(
+    id: string,
+    input: MarkDepositAddressMatchedInput
+  ): Promise<DepositAddress | null> {
+    const rows = await this.db
+      .update(depositAddresses)
+      .set({
+        status: "completed",
+        matchStatus: "matched",
+        matchedTransferId: input.transferId,
+        receivedAmountRaw: input.receivedAmountRaw,
+        receivedAmountFormatted: input.receivedAmountFormatted,
+        matchSource: input.matchSource,
+        matchedAt: input.matchedAt,
+        updatedAt: input.matchedAt
+      })
+      .where(eq(depositAddresses.id, id))
+      .returning();
+    const row = first(rows);
+    return row ? mapDepositAddress(row) : null;
+  }
+
+  async closeDepositAddress(merchantId: string, id: string, closedAt: Date): Promise<DepositAddress | null> {
+    const rows = await this.db
+      .update(depositAddresses)
+      .set({ status: "closed", updatedAt: closedAt })
+      .where(and(eq(depositAddresses.merchantId, merchantId), eq(depositAddresses.id, id), eq(depositAddresses.status, "active")))
+      .returning();
+    const row = first(rows);
+    return row ? mapDepositAddress(row) : null;
   }
 
   async expireDepositAddresses(now: Date): Promise<DepositAddress[]> {
@@ -628,6 +763,20 @@ export class PostgresRepository implements Repository {
 
   async getTokenTransfer(id: string): Promise<TokenTransfer | null> {
     const rows = await this.db.select().from(tokenTransfers).where(eq(tokenTransfers.id, id)).limit(1);
+    const row = first(rows);
+    return row ? mapTransfer(row) : null;
+  }
+
+  async getTokenTransferByChainLog(
+    network: NetworkSlug,
+    txHash: ChainTxHash,
+    logIndex: number
+  ): Promise<TokenTransfer | null> {
+    const rows = await this.db
+      .select()
+      .from(tokenTransfers)
+      .where(and(eq(tokenTransfers.network, network), eq(tokenTransfers.txHash, txHash), eq(tokenTransfers.logIndex, logIndex)))
+      .limit(1);
     const row = first(rows);
     return row ? mapTransfer(row) : null;
   }
@@ -717,6 +866,72 @@ export class PostgresRepository implements Repository {
     return row ? mapTransfer(row) : null;
   }
 
+  async createTreasuryTransferIfNotExists(
+    input: CreateTreasuryTransferInput
+  ): Promise<{ transfer: TreasuryTransfer; created: boolean }> {
+    const rows = await this.db
+      .insert(treasuryTransfers)
+      .values(input)
+      .onConflictDoNothing()
+      .returning();
+    const inserted = first(rows);
+
+    if (inserted) {
+      return { transfer: mapTreasuryTransfer(inserted), created: true };
+    }
+
+    const existing = await this.db
+      .select()
+      .from(treasuryTransfers)
+      .where(
+        and(
+          eq(treasuryTransfers.network, input.network),
+          eq(treasuryTransfers.txHash, input.txHash),
+          eq(treasuryTransfers.logIndex, input.logIndex)
+        )
+      )
+      .limit(1);
+    return { transfer: mapTreasuryTransfer(existing[0] as typeof treasuryTransfers.$inferSelect), created: false };
+  }
+
+  async getTreasuryTransfer(id: string): Promise<TreasuryTransfer | null> {
+    const rows = await this.db.select().from(treasuryTransfers).where(eq(treasuryTransfers.id, id)).limit(1);
+    const row = first(rows);
+    return row ? mapTreasuryTransfer(row) : null;
+  }
+
+  async listTreasuryTransfers(filter: ListTreasuryTransfersFilter): Promise<TreasuryTransfer[]> {
+    const conditions = [
+      filter.merchantId ? eq(treasuryTransfers.merchantId, filter.merchantId) : undefined,
+      filter.status ? eq(treasuryTransfers.status, filter.status) : undefined,
+      filter.network ? eq(treasuryTransfers.network, filter.network) : undefined,
+      filter.token ? eq(treasuryTransfers.token, filter.token) : undefined
+    ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
+    const rows = await this.db
+      .select()
+      .from(treasuryTransfers)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(treasuryTransfers.detectedAt))
+      .limit(filter.limit);
+    return rows.map(mapTreasuryTransfer);
+  }
+
+  async updateTreasuryTransferStatus(
+    id: string,
+    status: TreasuryTransferStatus,
+    matchedDepositAddressId: string | null = null,
+    matchSource: DepositMatchSource | null = null,
+    matchedAt: Date | null = null
+  ): Promise<TreasuryTransfer | null> {
+    const rows = await this.db
+      .update(treasuryTransfers)
+      .set({ status, matchedDepositAddressId, matchSource, matchedAt, updatedAt: new Date() })
+      .where(eq(treasuryTransfers.id, id))
+      .returning();
+    const row = first(rows);
+    return row ? mapTreasuryTransfer(row) : null;
+  }
+
   async getLatestGasTopUpByTransfer(transferId: string): Promise<GasTopUp | null> {
     const rows = await this.db
       .select()
@@ -769,6 +984,16 @@ export class PostgresRepository implements Repository {
       .returning();
     const row = first(rows);
     return row ? mapGasTopUp(row) : null;
+  }
+
+  async getSweepByTxHash(network: NetworkSlug, token: TokenSymbol, txHash: ChainTxHash): Promise<Sweep | null> {
+    const rows = await this.db
+      .select()
+      .from(sweeps)
+      .where(and(eq(sweeps.network, network), eq(sweeps.token, token), eq(sweeps.txHash, txHash)))
+      .limit(1);
+    const row = first(rows);
+    return row ? mapSweep(row) : null;
   }
 
   async getLatestSweepByTransfer(transferId: string): Promise<Sweep | null> {

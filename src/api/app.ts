@@ -9,7 +9,7 @@ import { constantTimeStringEqual, createAdminSessionToken } from "../security/ad
 import { sha256Hex } from "../security/hmac.js";
 import { DashboardService } from "../services/dashboard-service.js";
 import { DepositService } from "../services/deposit-service.js";
-import { MerchantService } from "../services/merchant-service.js";
+import { MerchantService, publicMerchantSettings } from "../services/merchant-service.js";
 import { SettlementService } from "../services/settlement-service.js";
 import { DefaultWebhookService } from "../services/webhook-service.js";
 import type { Repository } from "../repositories/repository.js";
@@ -30,14 +30,17 @@ import {
   configureWebhookSchema,
   createDepositAddressSchema,
   createWalletTransactionSchema,
-  dashboardListQuerySchema,
   dashboardHistoryQuerySchema,
+  dashboardListQuerySchema,
   dashboardLoginSchema,
   generateGasWalletSchema,
   generateTreasuryWalletSchema,
-  listTreasuryWalletsQuerySchema,
-  notificationPreferencesSchema,
   listDepositsQuerySchema,
+  listTreasuryTransfersQuerySchema,
+  listTreasuryWalletsQuerySchema,
+  matchTreasuryTransferSchema,
+  merchantSettingsSchema,
+  notificationPreferencesSchema,
   registerTreasuryWalletSchema
 } from "./schemas.js";
 
@@ -51,43 +54,28 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   const app = new Hono<{ Variables: AppVariables }>();
   const webhookService = new DefaultWebhookService(repo, config.encryptor);
   const merchantService = new MerchantService(repo, config.encryptor, config.networks);
-  const depositService = new DepositService(repo, config.encryptor, config.networks, webhookService);
+  const getOwnerMerchant = () => merchantService.getOrCreateOwnerAccount(config.ownerAccountId, config.ownerAccountName);
   const chainProvider = suppliedChainProvider ?? new MultiChainProvider(new ViemEvmProvider(), new TronProvider());
-  const settlementService = new SettlementService({
-    repo,
-    networks: config.networks,
-    encryptor: config.encryptor,
-    chainProvider,
-    webhooks: webhookService
-  });
+  const depositService = new DepositService(repo, config.encryptor, config.networks, webhookService, chainProvider);
+  const settlementService = new SettlementService({ repo, networks: config.networks, encryptor: config.encryptor, chainProvider, webhooks: webhookService });
   const dashboardService = new DashboardService(
     repo,
     config.encryptor,
     config.networks,
     chainProvider,
     settlementService,
-    config.ownerAccountId
+    depositService,
+    config.ownerAccountId,
+    config.ownerAccountName
   );
-  const getOwnerAccount = () => merchantService.getOrCreateOwnerAccount(config.ownerAccountId, config.ownerAccountName);
 
   app.onError((error, c) => {
     if (error instanceof AppError) {
       return c.json({ error: { code: error.code, message: error.message, details: error.details } }, error.status as never);
     }
-
     if (error instanceof ZodError) {
-      return c.json(
-        {
-          error: {
-            code: "validation_error",
-            message: "Request validation failed",
-            details: error.flatten()
-          }
-        },
-        422
-      );
+      return c.json({ error: { code: "validation_error", message: "Request validation failed", details: error.flatten() } }, 422);
     }
-
     console.error(error);
     return c.json({ error: { code: "internal_error", message: "Internal server error" } }, 500);
   });
@@ -99,43 +87,24 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     const body = await parseJson(c, dashboardLoginSchema);
     const usernameMatches = constantTimeStringEqual(body.username, config.adminDashboardUsername);
     const passwordMatches = constantTimeStringEqual(body.password, config.adminDashboardPassword);
-
     if (!usernameMatches || !passwordMatches) {
       return c.json({ error: { code: "invalid_login", message: "Invalid dashboard username or password" } }, 401);
     }
-
-    const token = createAdminSessionToken(
-      config.adminDashboardUsername,
-      config.adminSessionSecret,
-      config.adminSessionTtlSeconds
-    );
-    return c.json({
-      token,
-      expiresInSeconds: config.adminSessionTtlSeconds,
-      user: { username: config.adminDashboardUsername }
-    });
+    const token = createAdminSessionToken(config.adminDashboardUsername, config.adminSessionSecret, config.adminSessionTtlSeconds);
+    return c.json({ token, expiresInSeconds: config.adminSessionTtlSeconds, user: { username: config.adminDashboardUsername } });
   });
 
   app.use("/dashboard/api/*", dashboardAuthMiddleware(config));
-
   app.get("/dashboard/api/session", (c) => {
     const session = c.get("adminSession");
     return c.json({ user: { username: session.sub }, expiresAt: new Date(session.exp * 1000).toISOString() });
   });
-
-  app.get("/dashboard/api/overview", async (c) => {
-    await getOwnerAccount();
-    return c.json(await dashboardService.getOverview());
-  });
-
+  app.get("/dashboard/api/overview", async (c) => c.json(await dashboardService.getOverview()));
   app.get("/dashboard/api/data", async (c) => {
-    await getOwnerAccount();
     const query = dashboardListQuerySchema.parse({ limit: c.req.query("limit") });
     return c.json(await dashboardService.listDashboardData(query.limit));
   });
-
   app.get("/dashboard/api/history", async (c) => {
-    await getOwnerAccount();
     const query = dashboardHistoryQuerySchema.parse({
       resource: c.req.query("resource"),
       limit: c.req.query("limit"),
@@ -147,180 +116,129 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
     });
     return c.json(await dashboardService.getHistory(query));
   });
-
   app.post("/dashboard/api/api-keys", async (c) => {
-    const owner = await getOwnerAccount();
-    const result = await merchantService.createApiKey(owner.id);
-    return c.json(result, 201);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.createApiKey(owner.id), 201);
   });
-
+  app.put("/dashboard/api/webhook", async (c) => {
+    const body = await parseJson(c, configureWebhookSchema);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.configureWebhook(owner.id, body.url, body.secret, body.active, { rotateSecret: body.rotateSecret }));
+  });
   app.put("/dashboard/api/notification-preferences", async (c) => {
-    const owner = await getOwnerAccount();
     const body = await parseJson(c, notificationPreferencesSchema);
-    return c.json(await dashboardService.updateNotificationPreferences(owner.id, body.enabledEvents));
+    return c.json(await dashboardService.updateNotificationPreferences(body.enabledEvents));
   });
-
-  app.post("/dashboard/api/wallets/gas", async (c) => {
-    const body = await parseJson(c, generateGasWalletSchema);
-    return c.json(await dashboardService.generateGasWallet(body), 201);
+  app.put("/dashboard/api/merchant-settings", async (c) => {
+    const body = await parseJson(c, merchantSettingsSchema);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.configureMerchantSettings(owner.id, body.rejectDuplicateClientPendingDeposits));
   });
-
-  app.post("/dashboard/api/wallets/treasury", async (c) => {
-    const owner = await getOwnerAccount();
-    const body = await parseJson(c, generateTreasuryWalletSchema);
-    return c.json(await dashboardService.generateTreasuryWallet({ ...body, merchantId: owner.id }), 201);
+  app.post("/dashboard/api/wallets/gas", async (c) => c.json(await dashboardService.generateGasWallet(await parseJson(c, generateGasWalletSchema)), 201));
+  app.post("/dashboard/api/wallets/treasury", async (c) => c.json(await dashboardService.generateTreasuryWallet(await parseJson(c, generateTreasuryWalletSchema)), 201));
+  app.post("/dashboard/api/treasury-wallets", async (c) => c.json(await dashboardService.registerTreasuryWallet(await parseJson(c, registerTreasuryWalletSchema))));
+  app.post("/dashboard/api/treasury-wallets/:treasuryWalletId/default", async (c) => c.json(await dashboardService.setDefaultTreasuryWallet(c.req.param("treasuryWalletId"))));
+  app.post("/dashboard/api/deposits/:transferId/retry-settlement", async (c) => c.json(await dashboardService.retryDepositSettlement(c.req.param("transferId"))));
+  app.post("/dashboard/api/deposit-addresses/:depositAddressId/close", async (c) => c.json(await dashboardService.closeDepositAddress(c.req.param("depositAddressId"))));
+  app.post("/dashboard/api/treasury-transfers/:treasuryTransferId/match", async (c) => {
+    const body = await parseJson(c, matchTreasuryTransferSchema);
+    return c.json(await dashboardService.matchTreasuryTransfer(c.req.param("treasuryTransferId"), body.depositAddressId));
   });
-
-  app.post("/dashboard/api/treasury-wallets", async (c) => {
-    const owner = await getOwnerAccount();
-    const body = await parseJson(c, registerTreasuryWalletSchema);
-    return c.json(await dashboardService.registerTreasuryWallet({ ...body, merchantId: owner.id }));
-  });
-
-  app.post("/dashboard/api/treasury-wallets/:treasuryWalletId/default", async (c) => {
-    await getOwnerAccount();
-    return c.json(await dashboardService.setDefaultTreasuryWallet(c.req.param("treasuryWalletId")));
-  });
-
-  app.post("/dashboard/api/deposits/:transferId/retry-settlement", async (c) => {
-    await getOwnerAccount();
-    return c.json(await dashboardService.retryDepositSettlement(c.req.param("transferId")));
-  });
-
-  app.post("/dashboard/api/wallet-transactions", async (c) => {
-    const body = await parseJson(c, createWalletTransactionSchema);
-    return c.json(await dashboardService.createWalletTransaction(body), 201);
-  });
-
+  app.post("/dashboard/api/wallet-transactions", async (c) => c.json(await dashboardService.createWalletTransaction(await parseJson(c, createWalletTransactionSchema)), 201));
   app.all("/dashboard/api/*", (c) => c.json({ error: { code: "not_found", message: "Dashboard API route not found" } }, 404));
 
   app.use("/admin/*", adminAuthMiddleware(config.adminApiKey));
-
-  app.get("/admin/owner", async (c) => {
-    const merchant = await getOwnerAccount();
-    return c.json({
-      id: merchant.id,
-      name: merchant.name,
-      status: merchant.status,
-      createdAt: merchant.createdAt.toISOString(),
-      updatedAt: merchant.updatedAt.toISOString()
-    });
-  });
-
+  app.get("/admin/owner", async (c) => c.json(publicMerchantSettings(await getOwnerMerchant())));
   app.post("/admin/api-keys", async (c) => {
-    const owner = await getOwnerAccount();
-    const result = await merchantService.createApiKey(owner.id);
-    return c.json(result, 201);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.createApiKey(owner.id), 201);
   });
-
   app.post("/admin/api-keys/:apiKeyId/rotate", async (c) => {
-    const owner = await getOwnerAccount();
-    const result = await merchantService.rotateApiKey(owner.id, c.req.param("apiKeyId"));
-    return c.json(result);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.rotateApiKey(owner.id, c.req.param("apiKeyId")));
   });
-
   app.post("/admin/api-keys/:apiKeyId/revoke", async (c) => {
-    const owner = await getOwnerAccount();
-    const result = await merchantService.revokeApiKey(owner.id, c.req.param("apiKeyId"));
-    return c.json(result);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.revokeApiKey(owner.id, c.req.param("apiKeyId")));
   });
-
   app.put("/admin/webhook", async (c) => {
-    const owner = await getOwnerAccount();
     const body = await parseJson(c, configureWebhookSchema);
-    const result = await merchantService.configureWebhook(owner.id, body.url, body.secret, body.active);
-    return c.json(result);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.configureWebhook(owner.id, body.url, body.secret, body.active, { rotateSecret: body.rotateSecret }));
   });
-
+  app.put("/admin/merchant-settings", async (c) => {
+    const body = await parseJson(c, merchantSettingsSchema);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.configureMerchantSettings(owner.id, body.rejectDuplicateClientPendingDeposits));
+  });
   app.put("/admin/treasury-wallets", async (c) => {
-    const owner = await getOwnerAccount();
     const body = await parseJson(c, configureTreasuryWalletSchema);
-    const result = await merchantService.configureTreasuryWallet(
-      owner.id,
-      body.network,
-      body.token,
-      body.address
-    );
-    return c.json(result);
+    const owner = await getOwnerMerchant();
+    return c.json(await merchantService.configureTreasuryWallet(owner.id, body.network, body.token, body.address));
   });
-
-  app.get("/admin/networks", (c) => {
-    const enabled = enabledNetworks(config.networks)
-      .map((network) => ({
-        network: network.slug,
-        kind: network.kind,
-        chainId: network.chainId,
-        confirmations: network.confirmations,
-        tokens: enabledTokens(network)
-          .map((token) => ({
-            symbol: token.symbol,
-            contractAddress: token.contractAddress,
-            decimals: token.decimals
-          }))
-      }));
-    return c.json({ networks: enabled });
-  });
+  app.get("/admin/networks", (c) => c.json({ networks: enabledNetworks(config.networks).map((network) => ({ network: network.slug, kind: network.kind, chainId: network.chainId, confirmations: network.confirmations, tokens: enabledTokens(network).map((token) => ({ symbol: token.symbol, contractAddress: token.contractAddress, decimals: token.decimals })) })) }));
 
   app.use("/v1/*", merchantAuthMiddleware(repo, config));
-
   app.post("/v1/deposit-addresses", async (c) => {
-    const auth = c.get("auth");
+    const { merchant } = c.get("auth");
     const rawBody = c.get("rawBody");
     const idempotencyKey = c.req.header("idempotency-key");
     const route = "POST /v1/deposit-addresses";
     const requestHash = sha256Hex(rawBody);
-    const replay = await depositService.assertIdempotency(auth.merchant.id, route, idempotencyKey, requestHash);
-
+    const replay = await depositService.assertIdempotency(merchant.id, route, idempotencyKey, requestHash);
     if (replay.replay) {
       return c.json(replay.response, (replay.status ?? 200) as never);
     }
-
     const body = createDepositAddressSchema.parse(await c.req.json());
     const response = await depositService.createDepositAddress({
-      merchantId: auth.merchant.id,
+      merchantId: merchant.id,
       network: body.network,
       token: body.token,
+      clientId: body.clientId,
+      flow: body.flow,
+      amount: body.amount,
       treasuryWalletId: body.treasuryWalletId,
       callbackUrl: body.callbackUrl,
-      callbackSecret: body.callbackSecret,
       ttlSeconds: body.ttlSeconds,
       externalId: body.externalId,
       metadata: body.metadata,
       qrFormat: body.qrFormat
     });
-    await depositService.storeIdempotency(auth.merchant.id, route, idempotencyKey, requestHash, 201, response);
-
+    await depositService.storeIdempotency(merchant.id, route, idempotencyKey, requestHash, 201, response);
     return c.json(response, 201);
   });
-
+  app.post("/v1/treasury-transfers/:treasuryTransferId/match", async (c) => {
+    const { merchant } = c.get("auth");
+    const body = await parseJson(c, matchTreasuryTransferSchema);
+    return c.json(await depositService.matchTreasuryTransfer(merchant.id, c.req.param("treasuryTransferId"), body.depositAddressId));
+  });
   app.get("/v1/deposit-addresses/:id", async (c) => {
-    const auth = c.get("auth");
-    return c.json(await depositService.getDepositAddress(auth.merchant.id, c.req.param("id")));
+    const { merchant } = c.get("auth");
+    return c.json(await depositService.getDepositAddress(merchant.id, c.req.param("id")));
   });
-
+  app.post("/v1/deposit-addresses/:id/close", async (c) => {
+    const { merchant } = c.get("auth");
+    return c.json(await depositService.closeDepositAddress(merchant.id, c.req.param("id")));
+  });
   app.get("/v1/deposits", async (c) => {
-    const auth = c.get("auth");
-    const query = listDepositsQuerySchema.parse({
-      status: c.req.query("status"),
-      limit: c.req.query("limit")
-    });
-    return c.json(await depositService.listDeposits(auth.merchant.id, query.status, query.limit));
+    const { merchant } = c.get("auth");
+    const query = listDepositsQuerySchema.parse({ status: c.req.query("status"), limit: c.req.query("limit") });
+    return c.json(await depositService.listDeposits(merchant.id, query.status, query.limit));
   });
-
   app.get("/v1/treasury-wallets", async (c) => {
-    const auth = c.get("auth");
-    const query = listTreasuryWalletsQuerySchema.parse({
-      network: c.req.query("network"),
-      token: c.req.query("token"),
-      limit: c.req.query("limit")
-    });
-    return c.json(await depositService.listTreasuryWallets(auth.merchant.id, query.network, query.token, query.limit));
+    const { merchant } = c.get("auth");
+    const query = listTreasuryWalletsQuerySchema.parse({ network: c.req.query("network"), token: c.req.query("token"), limit: c.req.query("limit") });
+    return c.json(await depositService.listTreasuryWallets(merchant.id, query.network, query.token, query.limit));
+  });
+  app.get("/v1/treasury-transfers", async (c) => {
+    const { merchant } = c.get("auth");
+    const query = listTreasuryTransfersQuerySchema.parse({ status: c.req.query("status"), network: c.req.query("network"), token: c.req.query("token"), limit: c.req.query("limit") });
+    return c.json(await depositService.listTreasuryTransfers(merchant.id, query.status, query.network, query.token, query.limit));
   });
 
   app.get("/dashboard/assets/*", (c) => serveDashboardFile(c));
   app.get("/dashboard", (c) => serveDashboardIndex(c));
   app.get("/dashboard/*", (c) => serveDashboardIndex(c));
-
   return app;
 }
 
@@ -330,11 +248,9 @@ async function serveDashboardFile(c: Context): Promise<Response> {
   const url = new URL(c.req.url);
   const relativePath = url.pathname.replace(/^\/dashboard\//, "");
   const filePath = normalize(join(dashboardRoot, relativePath));
-
   if (!filePath.startsWith(`${dashboardRoot}${sep}`)) {
     return c.text("Not found", 404);
   }
-
   return serveFile(c, filePath);
 }
 

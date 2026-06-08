@@ -4,22 +4,20 @@ This document is the integration contract for outgoing webhooks.
 
 ## Delivery
 
-Webhook requests are `POST` requests to the callback URL supplied for that specific deposit address.
+Webhook requests are `POST` requests to the dashboard callback URL by default. A deposit request can optionally provide a per-deposit `callbackUrl` override.
 
-Your application creates the callback route with `POST /v1/deposit-addresses`:
+Configure the default callback URL and signing secret in the dashboard. The raw secret is shown only when it is first created or rotated. Your application can then create deposit requests without sending a callback secret each time:
 
 ```json
 {
   "network": "ethereum",
   "token": "USDT",
-  "callbackUrl": "https://app.example/webhooks/crypto/invoice-123",
-  "callbackSecret": "use-a-long-random-per-deposit-secret",
   "ttlSeconds": 3600,
   "externalId": "invoice-123"
 }
 ```
 
-`callbackSecret` is stored encrypted and is never returned. All lifecycle events for this deposit address use this callback URL and secret. The dashboard notification settings can enable or disable specific lifecycle event types globally.
+If a request supplies `callbackUrl` but not `callbackSecret`, lifecycle events for that deposit are delivered to the supplied URL and signed with the dashboard-managed secret. A per-deposit `callbackSecret` remains an advanced override; when supplied, it is stored encrypted and never returned. The dashboard notification settings can enable or disable specific lifecycle event types globally.
 
 Headers:
 
@@ -40,7 +38,7 @@ timestamp.raw_json_body
 Signature algorithm:
 
 ```text
-HMAC-SHA256(callbackSecret, signaturePayload)
+HMAC-SHA256(callbackSigningSecret, signaturePayload)
 ```
 
 Receivers should reject stale timestamps and use `X-Webhook-Id` or body `id` for idempotency.
@@ -67,6 +65,8 @@ Dates are ISO 8601 strings. Token amounts include both raw base units and format
 type WebhookEventType =
   | "wallet.created"
   | "wallet.expired"
+  | "direct_deposit.created"
+  | "direct_deposit.expired"
   | "transfer.detected"
   | "deposit.confirmed"
   | "deposit.late_detected"
@@ -101,7 +101,10 @@ type NetworkSlug =
   | "nile";
 
 type TokenSymbol = "USDT" | "USDC";
-type DepositAddressStatus = "active" | "expired";
+type DepositAddressStatus = "active" | "expired" | "completed";
+type DepositFlow = "temporary_wallet" | "direct_treasury";
+type DepositMatchStatus = "pending" | "matched";
+type DepositMatchSource = "auto" | "manual";
 type TransferStatus = "detected" | "confirmed" | "late";
 type TransactionStatus = "submitted" | "confirmed" | "failed";
 
@@ -114,6 +117,16 @@ interface DepositAddressPayload {
   treasuryWalletId: string | null;
   callbackUrl: string | null;
   status: DepositAddressStatus;
+  flow: DepositFlow;
+  requestedAmountRaw: string | null;
+  requestedAmountFormatted: string | null;
+  receivedAmountRaw: string | null;
+  receivedAmountFormatted: string | null;
+  amountDeltaRaw: string | null;
+  matchStatus: DepositMatchStatus | null;
+  matchedTransferId: string | null;
+  matchSource: DepositMatchSource | null;
+  matchedAt: string | null;
   expiresAt: string;
   externalId: string | null;
   metadata: unknown;
@@ -195,6 +208,28 @@ interface WalletExpiredData {
 
 Expiration means the intended payment window has closed. Late deposits can still be detected and settled.
 
+### direct_deposit.created
+
+Sent after the API creates a direct treasury deposit request and returns the selected treasury address as the payable address.
+
+```ts
+interface DirectDepositCreatedData {
+  depositAddress: DepositAddressPayload;
+  treasuryWallet: string;
+  treasuryWalletId: string;
+}
+```
+
+### direct_deposit.expired
+
+Sent once when an unmatched direct treasury request reaches its payment deadline.
+
+```ts
+interface DirectDepositExpiredData {
+  depositAddress: DepositAddressPayload;
+}
+```
+
 ### transfer.detected
 
 Sent when a confirmed-depth scan first sees an ERC-20 transfer into an active generated deposit address.
@@ -213,6 +248,7 @@ Sent after the transfer reaches the configured confirmation depth and the deposi
 ```ts
 interface DepositConfirmedData {
   transfer: TransferPayload;
+  depositAddress?: DepositAddressPayload;
 }
 ```
 
@@ -317,6 +353,16 @@ gas.topup.confirmed        optional
 sweep.submitted
 sweep.confirmed
 ```
+
+Direct treasury deposit:
+
+```text
+direct_deposit.created
+transfer.detected          only after auto or manual match
+deposit.confirmed
+```
+
+If a treasury transfer is outside tolerance or ambiguous, it is stored for dashboard or merchant API review and does not emit `transfer.detected` / `deposit.confirmed` until it is manually matched.
 
 Gas top-up failure:
 

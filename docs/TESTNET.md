@@ -97,11 +97,12 @@ APP_ENV_FILE=.env.testnet.example docker compose -f docker-compose.yml -f docker
 4. Store the one-time API secret shown in the response.
 5. Generate or register a treasury wallet for the testnet/token pair.
 6. Generate a gas wallet in the dashboard if no env gas wallet is configured.
-7. Create a deposit address with the Deposit API, including `callbackUrl` and `callbackSecret`.
-8. Send a small test token amount to the generated address.
-9. Watch worker logs for detection, confirmation, gas top-up, and sweep.
-10. Verify signed callbacks are received.
-11. Verify the treasury wallet receives the swept token balance.
+7. Configure the callback URL and copy the callback signing secret from the dashboard.
+8. Create a deposit address with the Deposit API.
+9. Send a small test token amount to the generated address.
+10. Watch worker logs for detection, confirmation, gas top-up, and sweep.
+11. Verify signed callbacks are received.
+12. Verify the treasury wallet receives the swept token balance.
 
 ## Example Testnet Deposit Request
 
@@ -109,8 +110,6 @@ APP_ENV_FILE=.env.testnet.example docker compose -f docker-compose.yml -f docker
 {
   "network": "baseSepolia",
   "token": "USDT",
-  "callbackUrl": "https://app.example/webhooks/crypto/testnet-invoice-001",
-  "callbackSecret": "testnet-invoice-001-callback-secret",
   "ttlSeconds": 3600,
   "externalId": "testnet-invoice-001",
   "metadata": {
@@ -126,8 +125,6 @@ TRON Nile example:
 {
   "network": "nile",
   "token": "USDT",
-  "callbackUrl": "https://app.example/webhooks/crypto/nile-invoice-001",
-  "callbackSecret": "nile-invoice-001-callback-secret",
   "ttlSeconds": 3600,
   "externalId": "nile-invoice-001",
   "metadata": {

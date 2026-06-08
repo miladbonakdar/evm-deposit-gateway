@@ -2,15 +2,14 @@ import { z } from "zod";
 import { createEncryptorFromBase64, type Encryptor } from "../security/encryption.js";
 import { loadSupportedNetworks, type SupportedNetworks } from "./networks.js";
 
-const internalOwnerAccountId = "00000000-0000-4000-8000-000000000001";
-const internalOwnerAccountName = "Owner";
-
 const appEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().url(),
   NETWORK_CONFIG_PATH: z.string().trim().min(1).default("config/networks.example.json"),
   ADMIN_API_KEY: z.string().min(24, "ADMIN_API_KEY must be at least 24 characters"),
+  OWNER_ACCOUNT_ID: z.string().uuid().default("00000000-0000-0000-0000-000000000001"),
+  OWNER_ACCOUNT_NAME: z.string().trim().min(1).max(120).default("Owner Merchant"),
   ADMIN_DASHBOARD_USERNAME: z.string().trim().min(1).max(120),
   ADMIN_DASHBOARD_PASSWORD: z.string().min(12, "ADMIN_DASHBOARD_PASSWORD must be at least 12 characters"),
   ADMIN_SESSION_SECRET: z.string().min(32, "ADMIN_SESSION_SECRET must be at least 32 characters"),
@@ -21,6 +20,7 @@ const appEnvSchema = z.object({
   WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   WEBHOOK_BASE_RETRY_SECONDS: z.coerce.number().int().positive().default(5),
   WEBHOOK_MAX_RETRY_DELAY_SECONDS: z.coerce.number().int().positive().default(86_400),
+  DIRECT_TREASURY_MATCH_TOLERANCE_BPS: z.coerce.number().int().min(0).max(10_000).default(500),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(15000)
 });
 
@@ -42,6 +42,7 @@ export interface AppConfig {
   webhookMaxAttempts: number;
   webhookBaseRetrySeconds: number;
   webhookMaxRetryDelaySeconds: number;
+  directTreasuryMatchToleranceBps: number;
   workerPollIntervalMs: number;
   networks: SupportedNetworks;
 }
@@ -56,8 +57,8 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: parsed.DATABASE_URL,
     networkConfigPath: parsed.NETWORK_CONFIG_PATH,
     adminApiKey: parsed.ADMIN_API_KEY,
-    ownerAccountId: internalOwnerAccountId,
-    ownerAccountName: internalOwnerAccountName,
+    ownerAccountId: parsed.OWNER_ACCOUNT_ID,
+    ownerAccountName: parsed.OWNER_ACCOUNT_NAME,
     adminDashboardUsername: parsed.ADMIN_DASHBOARD_USERNAME,
     adminDashboardPassword: parsed.ADMIN_DASHBOARD_PASSWORD,
     adminSessionSecret: parsed.ADMIN_SESSION_SECRET,
@@ -68,6 +69,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     webhookMaxAttempts: parsed.WEBHOOK_MAX_ATTEMPTS,
     webhookBaseRetrySeconds: parsed.WEBHOOK_BASE_RETRY_SECONDS,
     webhookMaxRetryDelaySeconds: parsed.WEBHOOK_MAX_RETRY_DELAY_SECONDS,
+    directTreasuryMatchToleranceBps: parsed.DIRECT_TREASURY_MATCH_TOLERANCE_BPS,
     workerPollIntervalMs: parsed.WORKER_POLL_INTERVAL_MS,
     networks: loadSupportedNetworks(env, parsed.NETWORK_CONFIG_PATH)
   };

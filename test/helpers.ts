@@ -78,6 +78,7 @@ export function createTestConfig(overrides: Partial<AppConfig> = {}): AppConfig 
     webhookMaxAttempts: 5,
     webhookBaseRetrySeconds: 1,
     webhookMaxRetryDelaySeconds: 86_400,
+    directTreasuryMatchToleranceBps: 500,
     workerPollIntervalMs: 1000,
     networks: createTestNetworks(),
     ...overrides

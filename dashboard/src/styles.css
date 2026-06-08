@@ -637,6 +637,18 @@ tr:hover td {
   text-overflow: ellipsis;
 }
 
+.match-action {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+}
+
+.match-action select {
+  min-height: 32px;
+  padding-block: 5px;
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -654,6 +666,8 @@ tr:hover td {
 .status.confirmed,
 .status.sent,
 .status.settled,
+.status.completed,
+.status.matched,
 .status.default,
 .status.treasury {
   background: #dcfce7;
@@ -663,6 +677,8 @@ tr:hover td {
 .status.submitted,
 .status.detected,
 .status.pending,
+.status.temporary_wallet,
+.status.direct_treasury,
 .status.gas,
 .status.gas_top_up,
 .status.sweep {
@@ -671,7 +687,10 @@ tr:hover td {
 }
 
 .status.failed,
-.status.expired {
+.status.expired,
+.status.closed,
+.status.unmatched,
+.status.ambiguous {
   background: #ffe4e6;
   color: #be123c;
 }

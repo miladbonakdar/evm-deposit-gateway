@@ -1,12 +1,12 @@
 # EVM Deposit Gateway
 
-Hono + TypeScript service for temporary USDT/USDC deposit addresses on configured EVM and TRON networks, with an admin operations dashboard.
+Hono + TypeScript service for USDT/USDC deposits on configured EVM and TRON networks, with temporary-wallet and direct-treasury payment flows plus an admin operations dashboard.
 
-The service creates temporary deposit wallets for one owner account, watches ERC-20/TRC-20 `Transfer` activity, sends signed lifecycle callbacks, tops up native gas when needed, sweeps token balances to configured treasury wallets, and provides a browser dashboard for monitoring and controlled wallet operations.
+The service creates temporary deposit wallets or direct treasury deposit requests for one owner account, watches ERC-20/TRC-20 `Transfer` activity, sends signed lifecycle callbacks, tops up native gas when needed, sweeps temporary-wallet balances to configured treasury wallets, and provides a browser dashboard for monitoring, reconciliation, and controlled wallet operations.
 
 ## What it does
 
-EVM Deposit Gateway lets your application request a temporary wallet address for an enabled token/network pair, such as USDT on Ethereum or TRON. A payer sends funds to that address. The worker detects the token transfer, confirms it after the configured block depth, notifies your callback URL, funds the temporary wallet with native gas if needed, and sweeps the full token balance to the owner treasury wallet.
+EVM Deposit Gateway lets your application request either a temporary wallet address or a direct treasury payment address for an enabled token/network pair, such as USDT on Ethereum or TRON. In the temporary flow, the worker detects the token transfer, confirms it after the configured block depth, notifies your callback URL, funds the temporary wallet with native gas if needed, and sweeps the full token balance to the owner treasury wallet. In the direct treasury flow, the payer sends funds to a selected treasury wallet and the worker matches by treasury, amount tolerance, and time window.
 
 The v1 scope is stablecoin deposits plus admin-controlled treasury/gas wallet operations. It does not provide exchange, customer account balances, or end-user wallet accounts.
 
@@ -14,11 +14,12 @@ The v1 scope is stablecoin deposits plus admin-controlled treasury/gas wallet op
 
 1. Dashboard automatically bootstraps the single internal owner account.
 2. Dashboard creates an API key and configures treasury/gas wallets for that owner.
-3. Your application calls `POST /v1/deposit-addresses` with HMAC-signed headers and a per-deposit callback URL/secret.
-4. API generates an encrypted temporary wallet and returns the public address plus optional QR output.
-5. Worker scans enabled ERC-20/TRC-20 transfers and matches deposits to generated addresses.
-6. Worker emits lifecycle callbacks, tops up gas when required, and sweeps tokens to treasury.
-7. Use `/dashboard` to monitor deposits, callbacks, gas top-ups, sweeps, and dashboard-submitted wallet transactions.
+3. Dashboard configures the merchant callback URL and copyable callback signing secret.
+4. Your application calls `POST /v1/deposit-addresses` with HMAC-signed headers and its own `externalId`.
+5. API either generates an encrypted temporary wallet or selects a treasury wallet for direct payment, then returns the payable address plus optional QR output.
+6. Worker scans enabled ERC-20/TRC-20 transfers and matches deposits to generated addresses or open direct treasury requests.
+7. Worker emits lifecycle callbacks, tops up gas when required, sweeps temporary-wallet tokens to treasury, and stores unmatched direct treasury transfers for review.
+8. Use `/dashboard` to monitor deposits, unmatched treasury transfers, callbacks, gas top-ups, sweeps, and dashboard-submitted wallet transactions.
 
 ## Features
 
@@ -268,8 +269,6 @@ const body = JSON.stringify({
   network: "ethereum",
   token: "USDT",
   treasuryWalletId: "optional-selected-treasury-uuid",
-  callbackUrl: "https://app.example/webhooks/crypto/invoice-123",
-  callbackSecret: "use-a-long-random-per-deposit-secret",
   ttlSeconds: 3600,
   externalId: "invoice-123",
   qrFormat: "pngDataUrl"
@@ -295,7 +294,7 @@ const response = await fetch("http://localhost:3000/v1/deposit-addresses", {
 
 ## Deposit API
 
-Create a temporary deposit address:
+Create a deposit request. Omit `flow` for the existing temporary-wallet flow:
 
 ```http
 POST /v1/deposit-addresses
@@ -308,11 +307,23 @@ Content-Type: application/json
   "network": "ethereum",
   "token": "USDT",
   "treasuryWalletId": "optional-selected-treasury-uuid",
-  "callbackUrl": "https://app.example/webhooks/crypto/invoice-123",
-  "callbackSecret": "use-a-long-random-per-deposit-secret",
   "ttlSeconds": 3600,
   "externalId": "invoice-123",
   "metadata": { "customerId": "cus_123" },
+  "qrFormat": "pngDataUrl"
+}
+```
+
+Create a direct treasury request by adding `flow: "direct_treasury"` and the requested token amount:
+
+```json
+{
+  "network": "ethereum",
+  "token": "USDT",
+  "flow": "direct_treasury",
+  "amount": "100",
+  "ttlSeconds": 86400,
+  "externalId": "invoice-124",
   "qrFormat": "pngDataUrl"
 }
 ```
@@ -322,8 +333,12 @@ Other endpoints:
 - `GET /v1/treasury-wallets?network=ethereum&token=USDT`
 - `GET /v1/deposit-addresses/:id`
 - `GET /v1/deposits?status=confirmed&limit=50`
+- `GET /v1/treasury-transfers?status=unmatched&limit=50`
+- `POST /v1/treasury-transfers/:id/match`
 
-If `treasuryWalletId` is omitted, the deposit uses the default treasury wallet for the requested network/token. Generated private keys are never returned by the API. `merchantId` in API and webhook payloads is the internal owner id used to relate records.
+If `treasuryWalletId` is omitted for `temporary_wallet`, the deposit uses the default treasury wallet for the requested network/token. If it is omitted for `direct_treasury`, the API selects the treasury wallet with the fewest active direct requests for that asset. Direct treasury auto-matching uses `DIRECT_TREASURY_MATCH_TOLERANCE_BPS` and defaults to 5%. Transfers that are out of tolerance or match multiple open direct requests are stored as unmatched/ambiguous treasury transfers for dashboard or merchant API reconciliation. Temporary deposit address creation also verifies that the selected treasury matches the requested asset, worker scan settings are usable, the chain RPC and token contract can be read, a gas wallet is configured, the gas top-up amount meets the network minimum, and the gas wallet currently has at least one top-up amount of native gas. If any check fails, the API returns a `422` before creating the temporary wallet; multiple missing items are returned together as `deposit_configuration_incomplete` with an `issues` list. Generated private keys are never returned by the API. `merchantId` in API and webhook payloads is the internal owner id used to relate records.
+
+Callbacks use the dashboard callback configuration by default. The dashboard returns the callback signing secret only when it is first created or rotated, so copy it into the merchant webhook receiver at that time. Deposit requests may still pass `callbackUrl` as a per-order URL override; if no `callbackSecret` is supplied, that URL is signed with the dashboard-managed secret.
 
 Response shape:
 
@@ -335,8 +350,18 @@ Response shape:
   "token": "USDT",
   "address": "0x...",
   "treasuryWalletId": "uuid",
-  "callbackUrl": "https://app.example/webhooks/crypto/invoice-123",
+  "callbackUrl": null,
   "status": "active",
+  "flow": "direct_treasury",
+  "requestedAmountRaw": "100000000",
+  "requestedAmountFormatted": "100",
+  "receivedAmountRaw": null,
+  "receivedAmountFormatted": null,
+  "amountDeltaRaw": null,
+  "matchStatus": "pending",
+  "matchedTransferId": null,
+  "matchSource": null,
+  "matchedAt": null,
   "expiresAt": "2026-06-04T20:00:00.000Z",
   "externalId": "invoice-123",
   "metadata": { "customerId": "cus_123" },
@@ -348,13 +373,13 @@ Response shape:
 }
 ```
 
-Gas top-up and sweep failures still emit `gas.topup.failed` or `sweep.failed` callbacks, but the deposit settlement remains pending in the dashboard. After an operator funds/configures the gas wallet or resolves the sweep issue, use **Retry Settlement** in the deposit history to create a new gas top-up or sweep attempt while preserving the failed attempt history.
+Gas top-up and sweep failures can still emit `gas.topup.failed` or `sweep.failed` callbacks if the gas source is depleted after address creation or a transaction fails, but the deposit settlement remains pending in the dashboard. After an operator funds/configures the gas wallet or resolves the sweep issue, use **Retry Settlement** in the deposit history to create a new gas top-up or sweep attempt while preserving the failed attempt history.
 
 ## Webhooks
 
-Each deposit address has its own callback URL and signing secret from `POST /v1/deposit-addresses`. All lifecycle callbacks for that deposit are delivered to that callback URL. The dashboard notification settings can enable or disable specific lifecycle event types globally.
+Callbacks use the dashboard callback URL and signing secret by default. A deposit request can optionally provide `callbackUrl` to route one order to a different URL; unless it also provides an advanced per-deposit `callbackSecret`, that URL is signed with the dashboard-managed secret. The dashboard notification settings can enable or disable specific lifecycle event types globally.
 
-Outgoing webhooks are signed with the per-deposit callback secret:
+Outgoing webhooks are signed with the dashboard callback secret, or with a per-deposit secret only when one was explicitly supplied:
 
 ```http
 X-Webhook-Id: <event-id>
@@ -372,6 +397,8 @@ Lifecycle event types:
 
 - `wallet.created`
 - `wallet.expired`
+- `direct_deposit.created`
+- `direct_deposit.expired`
 - `transfer.detected`
 - `deposit.confirmed`
 - `deposit.late_detected`

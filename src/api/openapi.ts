@@ -19,7 +19,7 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
     info: {
       title: "Crypto Deposit API",
       version: "0.1.0",
-      description: "Temporary USDT/USDC deposit addresses for supported EVM and TRON networks."
+      description: "USDT/USDC deposit requests for supported EVM and TRON networks, using temporary wallets or direct treasury payments."
     },
     security: [{ ClientHmac: [] }],
     components: {
@@ -81,29 +81,50 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
           responses: { "200": { description: "Treasury wallet" } }
         }
       },
+      "/admin/webhook": {
+        put: {
+          security: [{ AdminBearer: [] }],
+          summary: "Configure owner callback URL and signing secret",
+          responses: { "200": { description: "Callback configuration. Secret is returned only when created or rotated." } }
+        }
+      },
       "/v1/deposit-addresses": {
         post: {
-          summary: "Create a temporary deposit address",
+          summary: "Create a deposit request",
           requestBody: {
             required: true,
             content: {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["network", "token", "callbackUrl", "callbackSecret"],
+                  required: ["network", "token"],
                   properties: {
                     network: { type: "string" },
                     token: { type: "string", enum: ["USDT", "USDC"] },
+                    flow: {
+                      type: "string",
+                      enum: ["temporary_wallet", "direct_treasury"],
+                      default: "temporary_wallet",
+                      description: "Temporary wallet preserves the sweep flow. Direct treasury returns a treasury address and requires amount."
+                    },
+                    amount: {
+                      type: "string",
+                      description: "Required for direct_treasury requests. Decimal token amount expected from the payer."
+                    },
                     treasuryWalletId: {
                       type: "string",
                       format: "uuid",
                       description: "Optional selectable treasury wallet ID. Defaults to the asset's default treasury wallet."
                     },
-                    callbackUrl: { type: "string", format: "uri" },
+                    callbackUrl: {
+                      type: "string",
+                      format: "uri",
+                      description: "Optional per-deposit callback URL override. Defaults to the dashboard callback URL."
+                    },
                     callbackSecret: {
                       type: "string",
                       minLength: 16,
-                      description: "Per-deposit webhook signing secret. Stored encrypted and never returned."
+                      description: "Optional per-deposit signing secret override. Defaults to the dashboard callback secret."
                     },
                     ttlSeconds: { type: "integer", minimum: 60, maximum: 2592000 },
                     externalId: { type: "string" },
@@ -114,7 +135,7 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
               }
             }
           },
-          responses: { "201": { description: "Deposit address with optional QR data" } }
+          responses: { "201": { description: "Deposit request with payable address and optional QR data" } }
         }
       },
       "/v1/treasury-wallets": {
@@ -138,6 +159,38 @@ export function buildOpenApiSpec(networks: SupportedNetworks) {
         get: {
           summary: "List detected or confirmed deposits",
           responses: { "200": { description: "Deposit list" } }
+        }
+      },
+      "/v1/treasury-transfers": {
+        get: {
+          summary: "List unmatched, ambiguous, or matched direct treasury transfers",
+          parameters: [
+            { name: "status", in: "query", schema: { type: "string", enum: ["unmatched", "ambiguous", "matched"] } },
+            { name: "network", in: "query", schema: { type: "string" } },
+            { name: "token", in: "query", schema: { type: "string", enum: ["USDT", "USDC"] } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } }
+          ],
+          responses: { "200": { description: "Treasury transfer review list" } }
+        }
+      },
+      "/v1/treasury-transfers/{treasuryTransferId}/match": {
+        post: {
+          summary: "Manually match an unmatched treasury transfer to a direct deposit request",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["depositAddressId"],
+                  properties: {
+                    depositAddressId: { type: "string", format: "uuid" }
+                  }
+                }
+              }
+            }
+          },
+          responses: { "200": { description: "Matched treasury transfer, deposit request, and transfer" } }
         }
       }
     },

@@ -18,11 +18,9 @@ export function adminAuthMiddleware(adminApiKey: string): MiddlewareHandler<{ Va
     const headerKey = c.req.header("x-admin-api-key");
     const bearerKey = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
     const supplied = headerKey ?? bearerKey;
-
     if (!supplied || !constantTimeStringEqual(supplied, adminApiKey)) {
       throw unauthorized("invalid_admin_api_key", "Missing or invalid admin API key");
     }
-
     await next();
   };
 }
@@ -33,16 +31,11 @@ export function dashboardAuthMiddleware(
   return async (c, next) => {
     const authorization = c.req.header("authorization");
     const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
-
-    if (!token) {
-      throw unauthorized("missing_admin_session", "Missing admin session");
-    }
-
+    if (!token) throw unauthorized("missing_admin_session", "Missing admin session");
     const session = verifyAdminSessionToken(token, config.adminSessionSecret);
     if (session.sub !== config.adminDashboardUsername) {
       throw unauthorized("invalid_admin_session", "Invalid admin session");
     }
-
     c.set("adminSession", session);
     await next();
   };
@@ -57,16 +50,14 @@ export function merchantAuthMiddleware(
     const timestamp = c.req.header("x-timestamp");
     const nonce = c.req.header("x-nonce");
     const signature = c.req.header("x-signature");
-
     if (!publicKey || !timestamp || !nonce || !signature) {
-      throw unauthorized("missing_signature_headers", "Missing merchant authentication headers");
+      throw unauthorized("missing_signature_headers", "Missing API authentication headers");
     }
 
     const timestampSeconds = Number(timestamp);
     if (!Number.isInteger(timestampSeconds)) {
       throw unauthorized("invalid_timestamp", "X-Timestamp must be a Unix timestamp in seconds");
     }
-
     const skew = Math.abs(Date.now() / 1000 - timestampSeconds);
     if (skew > config.requestMaxSkewSeconds) {
       throw unauthorized("stale_request", "Request timestamp is outside the accepted window");
@@ -76,23 +67,18 @@ export function merchantAuthMiddleware(
     if (!apiKey || apiKey.status !== "active") {
       throw unauthorized("invalid_api_key", "Invalid API key");
     }
-
     const merchant = await repo.getMerchant(apiKey.merchantId);
-    if (!merchant || merchant.status !== "active") {
+    if (!merchant) {
+      throw unauthorized("invalid_api_key", "Invalid API key");
+    }
+    if (merchant.status !== "active") {
       throw forbidden("merchant_disabled", "Merchant is disabled");
     }
 
     const rawBody = Buffer.from(await c.req.raw.clone().arrayBuffer());
     const url = new URL(c.req.url);
-    const canonical = buildCanonicalRequest({
-      method: c.req.method,
-      pathWithQuery: `${url.pathname}${url.search}`,
-      timestamp,
-      nonce,
-      body: rawBody
-    });
+    const canonical = buildCanonicalRequest({ method: c.req.method, pathWithQuery: `${url.pathname}${url.search}`, timestamp, nonce, body: rawBody });
     const expectedSignature = signCanonicalRequest(config.encryptor.decryptString(apiKey.secretEncrypted), canonical);
-
     if (!timingSafeEqualHex(signature, expectedSignature)) {
       throw unauthorized("invalid_signature", "Invalid request signature");
     }
@@ -101,7 +87,6 @@ export function merchantAuthMiddleware(
     if (!inserted) {
       throw unauthorized("replayed_request", "Request nonce has already been used");
     }
-
     await repo.updateApiKeyLastUsed(apiKey.id, new Date());
     c.set("auth", { merchant, apiKey });
     c.set("rawBody", rawBody);

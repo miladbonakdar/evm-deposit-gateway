@@ -14,7 +14,7 @@ flowchart TD
   DashAPI --> Owner["Lazy-create single owner account"]
   AdminAPI --> Owner
   Owner --> ApiKeys["Create, rotate, revoke merchant API keys"]
-  Owner --> WebhookCfg["Configure fallback webhook"]
+  Owner --> WebhookCfg["Configure callback URL + signing secret"]
   Owner --> Treasury["Configure selectable treasury wallets"]
   DashAPI --> OpWallets["Generate operational gas / treasury wallets"]
   DashAPI --> ManualTx["Submit dashboard wallet transaction"]
@@ -24,21 +24,29 @@ flowchart TD
   DepositReq --> Idem{"Idempotency-Key<br/>already seen?"}
   Idem -->|same body| Replay["Replay stored response"]
   Idem -->|new| SelectTreasury["Resolve requested treasury ID<br/>or default by asset"]
-  SelectTreasury --> CheckTreasury{"Treasury wallet<br/>configured?"}
+  SelectTreasury --> FlowType{"Deposit flow"}
+  FlowType -->|temporary_wallet| CheckTreasury{"Treasury wallet<br/>configured?"}
+  FlowType -->|direct_treasury| DirectSelect["Select requested or<br/>least-pending treasury"]
+  DirectSelect --> DirectRow[("deposit_addresses<br/>flow=direct_treasury")]
+  DirectRow --> DirectCreated["Enqueue direct_deposit.created webhook"]
+  DirectCreated --> ReturnAddress["Return address + optional QR"]
   CheckTreasury -->|no| Reject["422 treasury_wallet_missing"]
   CheckTreasury -->|yes| TempWallet["Generate temp EVM/TRON wallet<br/>encrypt private key + callback secret"]
   TempWallet --> DepositRow[("deposit_addresses<br/>with treasury_wallet_id")]
   TempWallet --> WalletCreated["Enqueue wallet.created webhook"]
-  TempWallet --> ReturnAddress["Return address + optional QR"]
+  TempWallet --> ReturnAddress
 
   Payer["Payer sends USDT/USDC"] --> Chain["Enabled EVM/TRON chain"]
 
   Worker["Worker loop"] --> Expire["Expire old temp wallets"]
   Worker --> Scan["Scan enabled network/token Transfer events"]
   Scan --> Cursor[("chain_cursors")]
-  Scan --> Match{"Transfer to known<br/>deposit address?"}
+  Scan --> Match{"Transfer to known<br/>temporary address?"}
   Match -->|no| Ignore["Ignore"]
   Match -->|yes| TransferRow[("token_transfers")]
+  Match -->|treasury address| DirectMatch["Match open direct request<br/>by treasury + amount tolerance"]
+  DirectMatch -->|one candidate| TransferRow
+  DirectMatch -->|none / many| TreasuryTransfer[("treasury_transfers<br/>unmatched or ambiguous")]
   TransferRow --> Late{"Address expired?"}
   Late -->|yes| LateEvent["deposit.late_detected"]
   Late -->|no| DetectedEvent["transfer.detected"]
@@ -124,13 +132,15 @@ sequenceDiagram
 
 ## Flow Notes
 
-The dashboard and admin API operate on a single internal owner account. The owner account is created lazily when dashboard or admin routes need it. From there, operators create merchant API keys, configure fallback webhooks, configure selectable treasury wallets, generate operational wallets, retry blocked deposit settlement, and submit manual wallet transfers.
+The dashboard and admin API operate on a single internal owner account. The owner account is created lazily when dashboard or admin routes need it. From there, operators create merchant API keys, configure the callback URL and copyable signing secret, configure selectable treasury wallets, generate operational wallets, retry blocked deposit settlement, and submit manual wallet transfers.
 
 Merchant API calls under `/v1/*` require HMAC authentication. The request includes the public API key, timestamp, nonce, and signature. The server rejects stale timestamps, reused nonces, invalid signatures, revoked API keys, and disabled merchants.
 
 `POST /v1/deposit-addresses` is idempotency-aware. If the same `Idempotency-Key` is reused with the same request body, the stored response is replayed. If the same key is reused with a different body, the request is rejected.
 
-Deposit address creation requires a configured treasury wallet for the requested network and token. The merchant may pass `treasuryWalletId`; otherwise the API uses the default treasury for that asset. The API generates an EVM or TRON temporary wallet, encrypts the private key, encrypts the per-deposit callback secret, stores the public address and selected treasury ID, enqueues `wallet.created`, and returns the public address with optional QR output.
+Deposit request creation requires a configured treasury wallet for the requested network and token. It also requires an active dashboard callback configuration unless the request supplies both a per-deposit callback URL and secret. The merchant may pass `treasuryWalletId`. For the temporary-wallet flow, the API uses the default treasury when omitted, verifies worker scan settings, chain RPC connectivity, token contract readability, gas wallet configuration, gas top-up sizing, and current gas wallet native balance. If any of those checks fail, the API returns a `422` before creating the temporary wallet; multiple setup issues are returned together as `deposit_configuration_incomplete`. Otherwise, it generates an EVM or TRON temporary wallet, encrypts the private key, stores the public address and selected treasury ID, enqueues `wallet.created`, and returns the public address with optional QR output.
+
+For `direct_treasury`, the API requires `amount`. If `treasuryWalletId` is omitted, it selects the treasury wallet with the fewest active direct requests for that asset. The worker first ignores known internal sweep transactions, then auto-matches a treasury transfer only when exactly one active direct request for the same merchant/network/token/treasury is within the configured tolerance. Out-of-tolerance and ambiguous transfers are stored in `treasury_transfers` for dashboard or merchant API manual matching.
 
 The worker is the settlement state machine. Each tick expires old deposit addresses, scans configured token `Transfer` events, records matching deposits, confirms deposits after the configured block depth, checks native gas, tops up gas when needed, sweeps token balances to treasury, confirms submitted top-ups and sweeps, and confirms dashboard wallet transactions.
 
@@ -170,7 +180,7 @@ Temporary deposit wallets often receive only tokens and may have `0` native gas.
 
 If the top-up is submitted and later confirmed, the worker retries settlement and submits the token sweep.
 
-If the gas wallet key is missing, the gas wallet is unfunded, or the top-up transaction fails, the gateway records `gas.topup.failed`, enqueues a callback, and keeps the transfer settlement pending at the gas top-up step. The worker does not automatically create a second attempt after a failed attempt. Recovery is operational but first-class: fund or configure the gas source, then use **Retry Settlement** in the dashboard to create a new gas top-up attempt.
+For deposits whose gas source is depleted after address creation, or whose top-up transaction fails, the gateway records `gas.topup.failed`, enqueues a callback, and keeps the transfer settlement pending at the gas top-up step. The worker does not automatically create a second attempt after a failed attempt. Recovery is operational but first-class: fund or configure the gas source, then use **Retry Settlement** in the dashboard to create a new gas top-up attempt.
 
 Sweep submission or receipt failures behave the same way: the gateway records `sweep.failed`, sends the callback, keeps settlement pending at the sweep step, and preserves the failed attempt. After the issue is resolved, **Retry Settlement** creates a new sweep attempt.
 

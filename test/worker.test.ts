@@ -93,6 +93,7 @@ async function setupWorker(ttlSeconds = 3600, config = createTestConfig()) {
     merchantId: merchant.id,
     network: "ethereum",
     token: "USDT",
+    clientId: "worker-client",
     callbackUrl: "https://example.com/deposit-callback",
     callbackSecret: "deposit-callback-secret",
     ttlSeconds
@@ -107,6 +108,43 @@ async function setupWorker(ttlSeconds = 3600, config = createTestConfig()) {
   });
 
   return { config, repo, merchant, depositAddress, evm, worker };
+}
+
+async function setupDirectWorker(amount = "100", config = createTestConfig()) {
+  const repo = new MemoryRepository();
+  const webhooks = new DefaultWebhookService(repo, config.encryptor);
+  const merchantService = new MerchantService(repo, config.encryptor, config.networks);
+  const depositService = new DepositService(repo, config.encryptor, config.networks, webhooks);
+  const merchant = await merchantService.createMerchant("Direct Acme");
+  await repo.upsertWebhookConfig({
+    merchantId: merchant.id,
+    url: "https://example.com/webhook",
+    active: true,
+    secretEncrypted: config.encryptor.encryptString("merchant-webhook-secret")
+  });
+  await merchantService.configureTreasuryWallet(merchant.id, "ethereum", "USDT", testTreasuryAddress);
+  const depositAddress = await depositService.createDepositAddress({
+    merchantId: merchant.id,
+    network: "ethereum",
+    token: "USDT",
+    clientId: "direct-worker-client",
+    flow: "direct_treasury",
+    amount,
+    callbackUrl: "https://example.com/direct-callback",
+    callbackSecret: "direct-callback-secret",
+    ttlSeconds: 3600
+  });
+  const evm = new MockChainProvider();
+  const worker = new DepositWorker({
+    repo,
+    networks: config.networks,
+    encryptor: config.encryptor,
+    chainProvider: evm,
+    webhooks,
+    directTreasuryMatchToleranceBps: config.directTreasuryMatchToleranceBps
+  });
+
+  return { config, repo, merchant, depositAddress, depositService, evm, worker };
 }
 
 describe("deposit worker", () => {
@@ -147,6 +185,107 @@ describe("deposit worker", () => {
     );
   });
 
+  it("auto-matches direct treasury transfers within tolerance without sweeping", async () => {
+    const { repo, merchant, depositAddress, evm, worker } = await setupDirectWorker("100");
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"a".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"b".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: testTreasuryAddress,
+      value: 96_000_000n
+    });
+
+    await worker.runOnce();
+
+    const deposits = await repo.listTransfersForMerchant(merchant.id, { limit: 10 });
+    const matchedRequest = await repo.getDepositAddressForMerchant(merchant.id, depositAddress.id);
+    const events = await repo.listDueWebhookEvents(new Date(), 20);
+
+    expect(deposits).toHaveLength(1);
+    expect(deposits[0]?.status).toBe("confirmed");
+    expect(deposits[0]?.settlementStatus).toBe("settled");
+    expect(matchedRequest).toEqual(expect.objectContaining({
+      status: "completed",
+      matchStatus: "matched",
+      matchSource: "auto",
+      receivedAmountFormatted: "96"
+    }));
+    expect(evm.nativeTransfers).toHaveLength(0);
+    expect(evm.tokenTransfers).toHaveLength(0);
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["direct_deposit.created", "transfer.detected", "deposit.confirmed"])
+    );
+  });
+
+  it("stores out-of-tolerance direct treasury transfers for manual review", async () => {
+    const { repo, merchant, depositAddress, evm, worker } = await setupDirectWorker("100");
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"c".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"d".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: testTreasuryAddress,
+      value: 80_000_000n
+    });
+
+    await worker.runOnce();
+
+    expect(await repo.listTransfersForMerchant(merchant.id, { limit: 10 })).toHaveLength(0);
+    expect(await repo.getDepositAddressForMerchant(merchant.id, depositAddress.id)).toEqual(
+      expect.objectContaining({ status: "active", matchStatus: "pending" })
+    );
+    expect(await repo.listTreasuryTransfers({ merchantId: merchant.id, limit: 10 })).toEqual([
+      expect.objectContaining({ status: "unmatched", amountFormatted: "80" })
+    ]);
+  });
+
+  it("stores ambiguous direct treasury transfers with candidate request IDs", async () => {
+    const { repo, merchant, depositAddress, depositService, evm, worker } = await setupDirectWorker("100");
+    if (!depositAddress.treasuryWalletId) {
+      throw new Error("Expected direct deposit treasury wallet ID");
+    }
+    const second = await depositService.createDepositAddress({
+    merchantId: merchant.id,
+    network: "ethereum",
+    token: "USDT",
+    clientId: "direct-worker-second-client",
+    flow: "direct_treasury",
+      amount: "102",
+      treasuryWalletId: depositAddress.treasuryWalletId,
+      callbackUrl: "https://example.com/direct-second-callback",
+      callbackSecret: "direct-second-callback-secret",
+      ttlSeconds: 3600
+    });
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"e".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"f".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: testTreasuryAddress,
+      value: 101_000_000n
+    });
+
+    await worker.runOnce();
+
+    expect(await repo.listTransfersForMerchant(merchant.id, { limit: 10 })).toHaveLength(0);
+    expect(await repo.listTreasuryTransfers({ merchantId: merchant.id, limit: 10 })).toEqual([
+      expect.objectContaining({
+        status: "ambiguous",
+        candidateDepositAddressIds: expect.arrayContaining([depositAddress.id, second.id])
+      })
+    ]);
+  });
+
   it("tops up gas before sweeping when the deposit wallet lacks native gas", async () => {
     const { config, repo, merchant, depositAddress, evm, worker } = await setupWorker();
     evm.nativeBalance = 0n;
@@ -176,6 +315,40 @@ describe("deposit worker", () => {
       expect.arrayContaining(["gas.topup.submitted", "gas.topup.confirmed", "sweep.submitted", "sweep.confirmed"])
     );
     expect((await repo.listTransfersForMerchant(merchant.id, { limit: 10 }))[0]?.status).toBe("confirmed");
+  });
+
+  it("does not treat internal sweeps into treasury as direct treasury deposits", async () => {
+    const { repo, merchant, depositAddress, evm, worker } = await setupWorker();
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"1".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 100n,
+      blockHash: `0x${"2".repeat(64)}`,
+      from: "0x0000000000000000000000000000000000000def",
+      to: depositAddress.address,
+      value: 25_000_000n
+    });
+
+    await worker.runOnce();
+
+    evm.latestBlock = 130n;
+    evm.logs.push({
+      network: "ethereum",
+      token: "USDT",
+      txHash: `0x${"2".repeat(64)}`,
+      logIndex: 0,
+      blockNumber: 109n,
+      blockHash: `0x${"3".repeat(64)}`,
+      from: depositAddress.address,
+      to: testTreasuryAddress,
+      value: 50_000_000n
+    });
+
+    await worker.runOnce();
+
+    expect(await repo.listTreasuryTransfers({ merchantId: merchant.id, limit: 10 })).toHaveLength(0);
   });
 
   it("uses an encrypted generated gas wallet when env gas key is not configured", async () => {
@@ -208,11 +381,12 @@ describe("deposit worker", () => {
       privateKeyEncrypted: config.encryptor.encryptString(`0x${"3".repeat(64)}`),
       label: "Stored gas wallet"
     });
-    const depositAddress = await depositService.createDepositAddress({
-      merchantId: merchant.id,
-      network: "ethereum",
-      token: "USDT",
-      callbackUrl: "https://example.com/stored-gas-callback",
+  const depositAddress = await depositService.createDepositAddress({
+    merchantId: merchant.id,
+    network: "ethereum",
+    token: "USDT",
+    clientId: "stored-gas-client",
+    callbackUrl: "https://example.com/stored-gas-callback",
       callbackSecret: "stored-gas-callback-secret",
       ttlSeconds: 3600
     });

@@ -42,20 +42,27 @@ type WalletPurpose = "gas" | "treasury";
 type Status =
   | "active"
   | "expired"
+  | "completed"
+  | "closed"
   | "detected"
   | "confirmed"
   | "late"
   | "submitted"
   | "failed"
   | "pending"
+  | "unmatched"
+  | "ambiguous"
+  | "matched"
   | "sent"
   | "settled"
   | "gas_top_up"
   | "sweep";
-type HistoryResource = "depositAddresses" | "deposits" | "walletTransactions" | "gasTopUps" | "sweeps" | "webhooks";
+type HistoryResource = "depositAddresses" | "deposits" | "treasuryTransfers" | "walletTransactions" | "gasTopUps" | "sweeps" | "webhooks";
 type WebhookEventType =
   | "wallet.created"
   | "wallet.expired"
+  | "direct_deposit.created"
+  | "direct_deposit.expired"
   | "transfer.detected"
   | "deposit.confirmed"
   | "deposit.late_detected"
@@ -70,6 +77,7 @@ interface Merchant {
   id: string;
   status: string;
   name: string;
+  rejectDuplicateClientPendingDeposits: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,6 +89,22 @@ interface ApiKey {
   status: string;
   createdAt: string;
   lastUsedAt: string | null;
+}
+
+interface WebhookConfig {
+  merchantId: string;
+  url: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ConfigureWebhookResponse {
+  merchantId: string;
+  url: string;
+  active: boolean;
+  webhookSecret: string | null;
+  updatedAt: string;
 }
 
 interface NotificationPreferences {
@@ -131,7 +155,14 @@ interface DepositAddress {
   token: TokenSymbol;
   address: string;
   treasuryWalletId: string | null;
-  status: "active" | "expired";
+  status: "active" | "expired" | "completed" | "closed";
+  flow: "temporary_wallet" | "direct_treasury";
+  clientId: string;
+  requestedAmountFormatted: string | null;
+  receivedAmountFormatted: string | null;
+  matchStatus: "pending" | "matched" | null;
+  matchedTransferId: string | null;
+  matchSource: "auto" | "manual" | null;
   externalId: string | null;
   expiresAt: string;
   createdAt: string;
@@ -199,6 +230,23 @@ interface WalletTransaction {
   createdAt: string;
 }
 
+interface TreasuryTransfer {
+  id: string;
+  merchantId: string;
+  treasuryWalletId: string;
+  network: string;
+  token: TokenSymbol;
+  txHash: string;
+  fromAddress: string;
+  toAddress: string;
+  amountFormatted: string;
+  status: "unmatched" | "ambiguous" | "matched";
+  candidateDepositAddressIds: string[];
+  matchedDepositAddressId: string | null;
+  matchSource: "auto" | "manual" | null;
+  detectedAt: string;
+}
+
 interface WebhookEvent {
   id: string;
   merchantId: string;
@@ -214,12 +262,14 @@ interface WebhookEvent {
 interface DashboardData {
   merchants: Merchant[];
   apiKeys: ApiKey[];
+  webhookConfig: WebhookConfig | null;
   notificationPreferences: NotificationPreferences;
   networks: EnabledNetwork[];
   treasuryWallets: TreasuryWallet[];
   operationalWallets: OperationalWallet[];
   depositAddresses: DepositAddress[];
   deposits: Deposit[];
+  treasuryTransfers: TreasuryTransfer[];
   gasTopUps: GasTopUp[];
   sweeps: Sweep[];
   walletTransactions: WalletTransaction[];
@@ -265,6 +315,8 @@ const chartColors = ["#0891b2", "#16a34a", "#f59e0b", "#e11d48", "#7c3aed", "#47
 const notificationEvents: Array<{ type: WebhookEventType; label: string; group: "wallet" | "deposit" | "gas" | "sweep" }> = [
   { type: "wallet.created", label: "Wallet created", group: "wallet" },
   { type: "wallet.expired", label: "Wallet expired", group: "wallet" },
+  { type: "direct_deposit.created", label: "Direct deposit created", group: "deposit" },
+  { type: "direct_deposit.expired", label: "Direct deposit expired", group: "deposit" },
   { type: "transfer.detected", label: "Transfer detected", group: "deposit" },
   { type: "deposit.confirmed", label: "Deposit confirmed", group: "deposit" },
   { type: "deposit.late_detected", label: "Late deposit detected", group: "deposit" },
@@ -593,8 +645,30 @@ function SettingsPanel({
   mutate<T>(request: Promise<T>, successMessage: string): Promise<T | undefined>;
 }) {
   const [apiKeyResult, setApiKeyResult] = useState<{ apiKey: string; apiSecret: string } | null>(null);
+  const ownerMerchant = data.merchants[0];
+  const merchantSettingsKey = ownerMerchant
+    ? `${ownerMerchant.rejectDuplicateClientPendingDeposits}|${ownerMerchant.updatedAt}`
+    : "none";
+  const [rejectDuplicateClientPendingDeposits, setRejectDuplicateClientPendingDeposits] = useState(
+    ownerMerchant?.rejectDuplicateClientPendingDeposits ?? true
+  );
+  const webhookConfigKey = data.webhookConfig
+    ? `${data.webhookConfig.url}|${data.webhookConfig.active}|${data.webhookConfig.updatedAt}`
+    : "none";
+  const [webhookUrl, setWebhookUrl] = useState(data.webhookConfig?.url ?? "");
+  const [webhookActive, setWebhookActive] = useState(data.webhookConfig?.active ?? true);
+  const [webhookSecretResult, setWebhookSecretResult] = useState<string | null>(null);
   const notificationPreferenceKey = data.notificationPreferences.enabledEvents.join("|");
   const [enabledEvents, setEnabledEvents] = useState<WebhookEventType[]>(data.notificationPreferences.enabledEvents);
+
+  useEffect(() => {
+    setRejectDuplicateClientPendingDeposits(ownerMerchant?.rejectDuplicateClientPendingDeposits ?? true);
+  }, [merchantSettingsKey, ownerMerchant]);
+
+  useEffect(() => {
+    setWebhookUrl(data.webhookConfig?.url ?? "");
+    setWebhookActive(data.webhookConfig?.active ?? true);
+  }, [webhookConfigKey, data.webhookConfig]);
 
   useEffect(() => {
     setEnabledEvents(data.notificationPreferences.enabledEvents);
@@ -609,6 +683,40 @@ function SettingsPanel({
     if (result) {
       setApiKeyResult(result);
     }
+  }
+
+  async function saveWebhook(event: FormEvent) {
+    event.preventDefault();
+    const result = await mutate<ConfigureWebhookResponse>(
+      apiPut("/dashboard/api/webhook", token, {
+        url: webhookUrl,
+        active: webhookActive
+      }),
+      "Callback endpoint saved"
+    );
+    setWebhookSecretResult(result?.webhookSecret ?? null);
+  }
+
+  async function saveMerchantSettings(event: FormEvent) {
+    event.preventDefault();
+    await mutate(
+      apiPut("/dashboard/api/merchant-settings", token, {
+        rejectDuplicateClientPendingDeposits
+      }),
+      "Deposit request rules saved"
+    );
+  }
+
+  async function rotateWebhookSecret() {
+    const result = await mutate<ConfigureWebhookResponse>(
+      apiPut("/dashboard/api/webhook", token, {
+        url: webhookUrl,
+        active: webhookActive,
+        rotateSecret: true
+      }),
+      "Callback secret rotated"
+    );
+    setWebhookSecretResult(result?.webhookSecret ?? null);
   }
 
   async function saveNotificationPreferences(event: FormEvent) {
@@ -660,46 +768,80 @@ function SettingsPanel({
         <Panel title="API keys">
           <ApiKeysTable apiKeys={data.apiKeys} />
         </Panel>
-        <Panel title="Notification events">
-          <form className="preference-form" onSubmit={saveNotificationPreferences}>
-            <div className="preference-toolbar">
-              <div className="preference-count">
-                <SlidersHorizontal size={16} />
-                <strong>{enabledEvents.length}</strong>
-                <span>enabled</span>
-              </div>
-              <div className="preference-actions">
-                <button className="secondary" type="button" onClick={() => setEnabledEvents(notificationEvents.map((item) => item.type))}>
-                  <CheckCircle2 size={16} />All
-                </button>
-                <button className="secondary" type="button" onClick={() => setEnabledEvents([])}>
-                  <CircleOff size={16} />None
-                </button>
-                <button className="primary"><ShieldCheck size={16} />Save</button>
-              </div>
-            </div>
-            <div className="event-grid">
-              {notificationEvents.map((item) => {
-                const checked = enabledEvents.includes(item.type);
-                return (
-                  <label className={`event-option ${checked ? "selected" : ""}`} key={item.type}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleNotificationEvent(item.type)}
-                    />
-                    <span className="event-copy">
-                      <strong>{item.label}</strong>
-                      <small>{item.type}</small>
-                    </span>
-                    <span className={`event-group ${item.group}`}>{item.group}</span>
-                  </label>
-                );
-              })}
-            </div>
+        <Panel title="Callback endpoint">
+          <form className="form-grid" onSubmit={saveWebhook}>
+            <label>
+              URL
+              <input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} required />
+            </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={webhookActive} onChange={(event) => setWebhookActive(event.target.checked)} />
+              Active
+            </label>
+            <button className="primary"><RadioTower size={16} />Save</button>
+            <button className="secondary" type="button" onClick={() => void rotateWebhookSecret()} disabled={!webhookUrl}>
+              <RefreshCw size={16} />Rotate secret
+            </button>
           </form>
+          {webhookSecretResult ? (
+            <div className="secret-box">
+              <div><span>Callback secret</span><CopyText value={webhookSecretResult} /></div>
+            </div>
+          ) : null}
         </Panel>
       </div>
+      <Panel title="Deposit request rules">
+        <form className="form-grid" onSubmit={saveMerchantSettings}>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={rejectDuplicateClientPendingDeposits}
+              onChange={(event) => setRejectDuplicateClientPendingDeposits(event.target.checked)}
+            />
+            Reject duplicate active client deposits
+          </label>
+          <button className="primary"><ShieldCheck size={16} />Save</button>
+        </form>
+      </Panel>
+      <Panel title="Notification events">
+        <form className="preference-form" onSubmit={saveNotificationPreferences}>
+          <div className="preference-toolbar">
+            <div className="preference-count">
+              <SlidersHorizontal size={16} />
+              <strong>{enabledEvents.length}</strong>
+              <span>enabled</span>
+            </div>
+            <div className="preference-actions">
+              <button className="secondary" type="button" onClick={() => setEnabledEvents(notificationEvents.map((item) => item.type))}>
+                <CheckCircle2 size={16} />All
+              </button>
+              <button className="secondary" type="button" onClick={() => setEnabledEvents([])}>
+                <CircleOff size={16} />None
+              </button>
+              <button className="primary"><ShieldCheck size={16} />Save</button>
+            </div>
+          </div>
+          <div className="event-grid">
+            {notificationEvents.map((item) => {
+              const checked = enabledEvents.includes(item.type);
+              return (
+                <label className={`event-option ${checked ? "selected" : ""}`} key={item.type}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleNotificationEvent(item.type)}
+                  />
+                  <span className="event-copy">
+                    <strong>{item.label}</strong>
+                    <small>{item.type}</small>
+                  </span>
+                  <span className={`event-group ${item.group}`}>{item.group}</span>
+                </label>
+              );
+            })}
+          </div>
+        </form>
+      </Panel>
     </section>
   );
 }
@@ -871,19 +1013,79 @@ function DepositsPanel({
     }
   }
 
+  async function matchTreasuryTransfer(treasuryTransferId: string, depositAddressId: string) {
+    const result = await mutate(
+      apiPost(`/dashboard/api/treasury-transfers/${treasuryTransferId}/match`, token, { depositAddressId }),
+      "Treasury transfer matched"
+    );
+    if (result) {
+      setHistoryRefreshKey((current) => current + 1);
+    }
+  }
+
+  async function closeDepositAddress(depositAddressId: string) {
+    const result = await mutate(
+      apiPost(`/dashboard/api/deposit-addresses/${depositAddressId}/close`, token, {}),
+      "Deposit request closed"
+    );
+    if (result) {
+      setHistoryRefreshKey((current) => current + 1);
+    }
+  }
+
   return (
     <section className="stack">
       <HistoryPanel
         title="Deposit address history"
         resource="depositAddresses"
         networks={data.networks}
-        statusOptions={["active", "expired"]}
+        statusOptions={["active", "expired", "completed", "closed"]}
+        refreshKey={historyRefreshKey}
         columns={[
           { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
+          { header: "Client", render: (row) => <CopyText value={stringField(row, "clientId")} /> },
+          { header: "Flow", render: (row) => <StatusPill status={stringField(row, "flow")} /> },
           { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Requested", render: (row) => stringField(row, "requestedAmountFormatted") || "-" },
+          { header: "Received", render: (row) => stringField(row, "receivedAmountFormatted") || "-" },
+          { header: "Match", render: (row) => stringField(row, "matchStatus") ? <StatusPill status={stringField(row, "matchStatus")} /> : "-" },
           { header: "Address", render: (row) => <CopyText value={stringField(row, "address")} /> },
           { header: "Treasury", render: (row) => stringField(row, "treasuryWalletId") ? <CopyText value={stringField(row, "treasuryWalletId")} /> : "-" },
-          { header: "Expires", render: (row) => formatDate(stringField(row, "expiresAt")) }
+          { header: "Expires", render: (row) => formatDate(stringField(row, "expiresAt")) },
+          {
+            header: "Action",
+            render: (row) => stringField(row, "status") === "active"
+              ? (
+                <button className="secondary compact-button" type="button" onClick={() => void closeDepositAddress(stringField(row, "id"))}>
+                  <CircleOff size={15} />Close
+                </button>
+              )
+              : "-"
+          }
+        ]}
+      />
+      <HistoryPanel
+        title="Treasury transfer review"
+        resource="treasuryTransfers"
+        networks={data.networks}
+        statusOptions={["unmatched", "ambiguous", "matched"]}
+        refreshKey={historyRefreshKey}
+        columns={[
+          { header: "Asset", render: (row) => `${stringField(row, "network")} ${stringField(row, "token")}` },
+          { header: "Amount", render: (row) => <span className="amount">{stringField(row, "amountFormatted")}</span> },
+          { header: "Status", render: (row) => <StatusPill status={stringField(row, "status")} /> },
+          { header: "Tx", render: (row) => <CopyText value={stringField(row, "txHash")} /> },
+          { header: "Detected", render: (row) => formatDate(stringField(row, "detectedAt")) },
+          {
+            header: "Match",
+            render: (row) => (
+              <TreasuryTransferMatchAction
+                row={row}
+                depositRequests={data.depositAddresses}
+                onMatch={matchTreasuryTransfer}
+              />
+            )
+          }
         ]}
       />
       <HistoryPanel
@@ -1074,6 +1276,60 @@ function canRetrySettlement(row: Record<string, unknown>): boolean {
     (depositStatus === "confirmed" || depositStatus === "late") &&
     stringField(row, "settlementStatus") === "pending" &&
     Boolean(stringField(row, "settlementFailureReason"))
+  );
+}
+
+function TreasuryTransferMatchAction({
+  row,
+  depositRequests,
+  onMatch
+}: {
+  row: Record<string, unknown>;
+  depositRequests: DepositAddress[];
+  onMatch(treasuryTransferId: string, depositAddressId: string): Promise<void>;
+}) {
+  const candidates = depositRequests.filter((request) =>
+    request.flow === "direct_treasury" &&
+    request.status === "active" &&
+    request.matchStatus === "pending" &&
+    request.network === stringField(row, "network") &&
+    request.token === stringField(row, "token") &&
+    request.treasuryWalletId === stringField(row, "treasuryWalletId")
+  );
+  const [depositAddressId, setDepositAddressId] = useState(candidates[0]?.id ?? "");
+
+  useEffect(() => {
+    setDepositAddressId(candidates[0]?.id ?? "");
+  }, [stringField(row, "id"), candidates.length]);
+
+  if (stringField(row, "status") === "matched") {
+    return stringField(row, "matchedDepositAddressId")
+      ? <CopyText value={stringField(row, "matchedDepositAddressId")} />
+      : "-";
+  }
+
+  if (candidates.length === 0) {
+    return "-";
+  }
+
+  return (
+    <div className="match-action">
+      <select value={depositAddressId} onChange={(event) => setDepositAddressId(event.target.value)}>
+        {candidates.map((candidate) => (
+          <option key={candidate.id} value={candidate.id}>
+            {candidate.requestedAmountFormatted ?? candidate.id}
+          </option>
+        ))}
+      </select>
+      <button
+        className="secondary compact-button"
+        type="button"
+        disabled={!depositAddressId}
+        onClick={() => void onMatch(stringField(row, "id"), depositAddressId)}
+      >
+        <CheckCircle2 size={15} />Match
+      </button>
+    </div>
   );
 }
 
@@ -1283,11 +1539,12 @@ function ApiKeysTable({ apiKeys }: { apiKeys: ApiKey[] }) {
 function DepositAddressesTable({ addresses }: { addresses: DepositAddress[] }) {
   return (
     <table>
-      <thead><tr><th>Asset</th><th>Status</th><th>Address</th><th>Expires</th></tr></thead>
+      <thead><tr><th>Asset</th><th>Client</th><th>Status</th><th>Address</th><th>Expires</th></tr></thead>
       <tbody>
         {addresses.map((address) => (
           <tr key={address.id}>
             <td>{address.network} {address.token}</td>
+            <td><CopyText value={address.clientId} /></td>
             <td><StatusPill status={address.status} /></td>
             <td><CopyText value={address.address} /></td>
             <td>{formatDate(address.expiresAt)}</td>

@@ -18,7 +18,8 @@ const worker = new DepositWorker({
   networks: config.networks,
   encryptor: config.encryptor,
   chainProvider,
-  webhooks
+  webhooks,
+  directTreasuryMatchToleranceBps: config.directTreasuryMatchToleranceBps
 });
 const delivery = new WebhookDeliveryService(repo, config);
 
