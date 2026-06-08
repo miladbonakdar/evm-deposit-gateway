@@ -50,8 +50,8 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   const merchantService = new MerchantService(repo, config.encryptor, config.networks);
   const depositService = new DepositService(repo, config.encryptor, config.networks, webhookService);
   const chainProvider = suppliedChainProvider ?? new MultiChainProvider(new ViemEvmProvider(), new TronProvider());
-  const dashboardService = new DashboardService(repo, config.encryptor, config.networks, chainProvider, config.ownerMerchantId);
-  const getOwnerMerchant = () => merchantService.getOrCreateOwnerMerchant(config.ownerMerchantId, config.ownerMerchantName);
+  const dashboardService = new DashboardService(repo, config.encryptor, config.networks, chainProvider, config.ownerAccountId);
+  const getOwnerAccount = () => merchantService.getOrCreateOwnerAccount(config.ownerAccountId, config.ownerAccountName);
 
   app.onError((error, c) => {
     if (error instanceof AppError) {
@@ -107,18 +107,18 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   });
 
   app.get("/dashboard/api/overview", async (c) => {
-    await getOwnerMerchant();
+    await getOwnerAccount();
     return c.json(await dashboardService.getOverview());
   });
 
   app.get("/dashboard/api/data", async (c) => {
-    await getOwnerMerchant();
+    await getOwnerAccount();
     const query = dashboardListQuerySchema.parse({ limit: c.req.query("limit") });
     return c.json(await dashboardService.listDashboardData(query.limit));
   });
 
   app.get("/dashboard/api/history", async (c) => {
-    await getOwnerMerchant();
+    await getOwnerAccount();
     const query = dashboardHistoryQuerySchema.parse({
       resource: c.req.query("resource"),
       limit: c.req.query("limit"),
@@ -132,15 +132,15 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   });
 
   app.post("/dashboard/api/api-keys", async (c) => {
-    const merchant = await getOwnerMerchant();
-    const result = await merchantService.createApiKey(merchant.id);
+    const owner = await getOwnerAccount();
+    const result = await merchantService.createApiKey(owner.id);
     return c.json(result, 201);
   });
 
   app.put("/dashboard/api/webhook", async (c) => {
-    const merchant = await getOwnerMerchant();
+    const owner = await getOwnerAccount();
     const body = await parseJson(c, configureWebhookSchema);
-    return c.json(await merchantService.configureWebhook(merchant.id, body.url, body.secret, body.active));
+    return c.json(await merchantService.configureWebhook(owner.id, body.url, body.secret, body.active));
   });
 
   app.post("/dashboard/api/wallets/gas", async (c) => {
@@ -149,15 +149,15 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   });
 
   app.post("/dashboard/api/wallets/treasury", async (c) => {
-    const merchant = await getOwnerMerchant();
+    const owner = await getOwnerAccount();
     const body = await parseJson(c, generateTreasuryWalletSchema);
-    return c.json(await dashboardService.generateTreasuryWallet({ ...body, merchantId: merchant.id }), 201);
+    return c.json(await dashboardService.generateTreasuryWallet({ ...body, merchantId: owner.id }), 201);
   });
 
   app.post("/dashboard/api/treasury-wallets", async (c) => {
-    const merchant = await getOwnerMerchant();
+    const owner = await getOwnerAccount();
     const body = await parseJson(c, registerTreasuryWalletSchema);
-    return c.json(await dashboardService.registerTreasuryWallet({ ...body, merchantId: merchant.id }));
+    return c.json(await dashboardService.registerTreasuryWallet({ ...body, merchantId: owner.id }));
   });
 
   app.post("/dashboard/api/wallet-transactions", async (c) => {
@@ -170,7 +170,7 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   app.use("/admin/*", adminAuthMiddleware(config.adminApiKey));
 
   app.get("/admin/owner", async (c) => {
-    const merchant = await getOwnerMerchant();
+    const merchant = await getOwnerAccount();
     return c.json({
       id: merchant.id,
       name: merchant.name,
@@ -181,35 +181,35 @@ export function createApp({ repo, config, chainProvider: suppliedChainProvider }
   });
 
   app.post("/admin/api-keys", async (c) => {
-    const merchant = await getOwnerMerchant();
-    const result = await merchantService.createApiKey(merchant.id);
+    const owner = await getOwnerAccount();
+    const result = await merchantService.createApiKey(owner.id);
     return c.json(result, 201);
   });
 
   app.post("/admin/api-keys/:apiKeyId/rotate", async (c) => {
-    const merchant = await getOwnerMerchant();
-    const result = await merchantService.rotateApiKey(merchant.id, c.req.param("apiKeyId"));
+    const owner = await getOwnerAccount();
+    const result = await merchantService.rotateApiKey(owner.id, c.req.param("apiKeyId"));
     return c.json(result);
   });
 
   app.post("/admin/api-keys/:apiKeyId/revoke", async (c) => {
-    const merchant = await getOwnerMerchant();
-    const result = await merchantService.revokeApiKey(merchant.id, c.req.param("apiKeyId"));
+    const owner = await getOwnerAccount();
+    const result = await merchantService.revokeApiKey(owner.id, c.req.param("apiKeyId"));
     return c.json(result);
   });
 
   app.put("/admin/webhook", async (c) => {
-    const merchant = await getOwnerMerchant();
+    const owner = await getOwnerAccount();
     const body = await parseJson(c, configureWebhookSchema);
-    const result = await merchantService.configureWebhook(merchant.id, body.url, body.secret, body.active);
+    const result = await merchantService.configureWebhook(owner.id, body.url, body.secret, body.active);
     return c.json(result);
   });
 
   app.put("/admin/treasury-wallets", async (c) => {
-    const merchant = await getOwnerMerchant();
+    const owner = await getOwnerAccount();
     const body = await parseJson(c, configureTreasuryWalletSchema);
     const result = await merchantService.configureTreasuryWallet(
-      merchant.id,
+      owner.id,
       body.network,
       body.token,
       body.address

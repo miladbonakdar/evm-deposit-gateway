@@ -2,14 +2,15 @@ import { z } from "zod";
 import { createEncryptorFromBase64, type Encryptor } from "../security/encryption.js";
 import { loadSupportedNetworks, type SupportedNetworks } from "./networks.js";
 
+const internalOwnerAccountId = "00000000-0000-4000-8000-000000000001";
+const internalOwnerAccountName = "Owner";
+
 const appEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().url(),
   NETWORK_CONFIG_PATH: z.string().trim().min(1).default("config/networks.example.json"),
   ADMIN_API_KEY: z.string().min(24, "ADMIN_API_KEY must be at least 24 characters"),
-  OWNER_MERCHANT_ID: z.string().uuid().default("00000000-0000-4000-8000-000000000001"),
-  OWNER_MERCHANT_NAME: z.string().trim().min(1).max(120).default("Owner"),
   ADMIN_DASHBOARD_USERNAME: z.string().trim().min(1).max(120),
   ADMIN_DASHBOARD_PASSWORD: z.string().min(12, "ADMIN_DASHBOARD_PASSWORD must be at least 12 characters"),
   ADMIN_SESSION_SECRET: z.string().min(32, "ADMIN_SESSION_SECRET must be at least 32 characters"),
@@ -29,8 +30,8 @@ export interface AppConfig {
   databaseUrl: string;
   networkConfigPath: string;
   adminApiKey: string;
-  ownerMerchantId: string;
-  ownerMerchantName: string;
+  ownerAccountId: string;
+  ownerAccountName: string;
   adminDashboardUsername: string;
   adminDashboardPassword: string;
   adminSessionSecret: string;
@@ -55,8 +56,8 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: parsed.DATABASE_URL,
     networkConfigPath: parsed.NETWORK_CONFIG_PATH,
     adminApiKey: parsed.ADMIN_API_KEY,
-    ownerMerchantId: parsed.OWNER_MERCHANT_ID,
-    ownerMerchantName: parsed.OWNER_MERCHANT_NAME,
+    ownerAccountId: internalOwnerAccountId,
+    ownerAccountName: internalOwnerAccountName,
     adminDashboardUsername: parsed.ADMIN_DASHBOARD_USERNAME,
     adminDashboardPassword: parsed.ADMIN_DASHBOARD_PASSWORD,
     adminSessionSecret: parsed.ADMIN_SESSION_SECRET,

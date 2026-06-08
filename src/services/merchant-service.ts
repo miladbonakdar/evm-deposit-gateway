@@ -17,13 +17,13 @@ export class MerchantService {
     return this.repo.createMerchant({ id: newId(), name });
   }
 
-  async getOrCreateOwnerMerchant(ownerMerchantId: string, ownerMerchantName: string) {
-    const existing = await this.repo.getMerchant(ownerMerchantId);
+  async getOrCreateOwnerAccount(ownerAccountId: string, ownerAccountName: string) {
+    const existing = await this.repo.getMerchant(ownerAccountId);
     if (existing) {
       return existing;
     }
 
-    return this.repo.createMerchant({ id: ownerMerchantId, name: ownerMerchantName });
+    return this.repo.createMerchant({ id: ownerAccountId, name: ownerAccountName });
   }
 
   async createApiKey(merchantId: string) {
@@ -51,7 +51,7 @@ export class MerchantService {
     const updated = await this.repo.updateApiKeySecret(apiKeyId, this.encryptor.encryptString(apiSecret));
 
     if (!updated || updated.merchantId !== merchantId) {
-      throw notFound("api_key_not_found", "API key was not found for this merchant");
+      throw notFound("api_key_not_found", "API key was not found for this owner account");
     }
 
     return {
@@ -67,7 +67,7 @@ export class MerchantService {
     const updated = await this.repo.updateApiKeyStatus(apiKeyId, "revoked");
 
     if (!updated || updated.merchantId !== merchantId) {
-      throw notFound("api_key_not_found", "API key was not found for this merchant");
+      throw notFound("api_key_not_found", "API key was not found for this owner account");
     }
 
     return { id: updated.id, status: updated.status };
@@ -122,7 +122,7 @@ export class MerchantService {
   async requireMerchant(merchantId: string) {
     const merchant = await this.repo.getMerchant(merchantId);
     if (!merchant) {
-      throw notFound("merchant_not_found", "Merchant was not found");
+      throw notFound("owner_account_not_found", "Owner account was not found");
     }
 
     return merchant;

@@ -67,15 +67,15 @@ export class DashboardService {
     private readonly encryptor: Encryptor,
     private readonly networks: SupportedNetworks,
     private readonly chainProvider: ChainProvider,
-    private readonly ownerMerchantId: string
+    private readonly ownerAccountId: string
   ) {}
 
   async getOverview() {
     const [owner, depositAddresses, deposits, gasTopUps, sweeps, walletTransactions, webhooks, operationalWallets] =
       await Promise.all([
-        this.repo.getMerchant(this.ownerMerchantId),
-        this.repo.listDepositAddresses({ merchantId: this.ownerMerchantId, limit: 500 }),
-        this.repo.listTransfersForMerchant(this.ownerMerchantId, { limit: 500 }),
+        this.repo.getMerchant(this.ownerAccountId),
+        this.repo.listDepositAddresses({ merchantId: this.ownerAccountId, limit: 500 }),
+        this.repo.listTransfersForMerchant(this.ownerAccountId, { limit: 500 }),
         this.repo.listGasTopUps(200),
         this.repo.listSweeps(200),
         this.repo.listWalletTransactions(200),
@@ -83,11 +83,11 @@ export class DashboardService {
         this.repo.listOperationalWallets({ includeDisabled: false, limit: 250 })
       ]);
     const merchants = owner ? [owner] : [];
-    const ownerGasTopUps = gasTopUps.filter((topUp) => topUp.merchantId === this.ownerMerchantId);
-    const ownerSweeps = sweeps.filter((sweep) => sweep.merchantId === this.ownerMerchantId);
-    const ownerWalletTransactions = walletTransactions.filter((transaction) => transaction.merchantId === this.ownerMerchantId || transaction.merchantId === null);
-    const ownerWebhooks = webhooks.filter((event) => event.merchantId === this.ownerMerchantId);
-    const ownerOperationalWallets = operationalWallets.filter((wallet) => wallet.merchantId === this.ownerMerchantId || wallet.merchantId === null);
+    const ownerGasTopUps = gasTopUps.filter((topUp) => topUp.merchantId === this.ownerAccountId);
+    const ownerSweeps = sweeps.filter((sweep) => sweep.merchantId === this.ownerAccountId);
+    const ownerWalletTransactions = walletTransactions.filter((transaction) => transaction.merchantId === this.ownerAccountId || transaction.merchantId === null);
+    const ownerWebhooks = webhooks.filter((event) => event.merchantId === this.ownerAccountId);
+    const ownerOperationalWallets = operationalWallets.filter((wallet) => wallet.merchantId === this.ownerAccountId || wallet.merchantId === null);
 
     return {
       stats: {
@@ -126,24 +126,24 @@ export class DashboardService {
       webhooks
     ] =
       await Promise.all([
-        this.repo.getMerchant(this.ownerMerchantId).then((merchant) => merchant ? [merchant] : []),
-        this.repo.listApiKeys(this.ownerMerchantId, limit),
+        this.repo.getMerchant(this.ownerAccountId).then((merchant) => merchant ? [merchant] : []),
+        this.repo.listApiKeys(this.ownerAccountId, limit),
         this.repo.listWebhookConfigs(limit),
-        this.repo.listTreasuryWallets(this.ownerMerchantId, limit),
+        this.repo.listTreasuryWallets(this.ownerAccountId, limit),
         this.repo.listOperationalWallets({ includeDisabled: false, limit }),
-        this.repo.listDepositAddresses({ merchantId: this.ownerMerchantId, limit }),
-        this.repo.listTransfersForMerchant(this.ownerMerchantId, { limit }),
+        this.repo.listDepositAddresses({ merchantId: this.ownerAccountId, limit }),
+        this.repo.listTransfersForMerchant(this.ownerAccountId, { limit }),
         this.repo.listGasTopUps(limit),
         this.repo.listSweeps(limit),
         this.repo.listWalletTransactions(limit),
         this.repo.listWebhookEvents(limit)
       ]);
-    const ownerWebhookConfigs = webhookConfigs.filter((config) => config.merchantId === this.ownerMerchantId);
-    const ownerOperationalWallets = operationalWallets.filter((wallet) => wallet.merchantId === this.ownerMerchantId || wallet.merchantId === null);
-    const ownerGasTopUps = gasTopUps.filter((topUp) => topUp.merchantId === this.ownerMerchantId);
-    const ownerSweeps = sweeps.filter((sweep) => sweep.merchantId === this.ownerMerchantId);
-    const ownerWalletTransactions = walletTransactions.filter((transaction) => transaction.merchantId === this.ownerMerchantId || transaction.merchantId === null);
-    const ownerWebhooks = webhooks.filter((event) => event.merchantId === this.ownerMerchantId);
+    const ownerWebhookConfigs = webhookConfigs.filter((config) => config.merchantId === this.ownerAccountId);
+    const ownerOperationalWallets = operationalWallets.filter((wallet) => wallet.merchantId === this.ownerAccountId || wallet.merchantId === null);
+    const ownerGasTopUps = gasTopUps.filter((topUp) => topUp.merchantId === this.ownerAccountId);
+    const ownerSweeps = sweeps.filter((sweep) => sweep.merchantId === this.ownerAccountId);
+    const ownerWalletTransactions = walletTransactions.filter((transaction) => transaction.merchantId === this.ownerAccountId || transaction.merchantId === null);
+    const ownerWebhooks = webhooks.filter((event) => event.merchantId === this.ownerAccountId);
 
     return {
       merchants: merchants.map(publicMerchant),
@@ -379,7 +379,7 @@ export class DashboardService {
   private async loadHistoryRows(resource: DashboardHistoryResource): Promise<Array<Record<string, unknown>>> {
     switch (resource) {
       case "depositAddresses":
-        return (await this.repo.listDepositAddresses({ merchantId: this.ownerMerchantId, limit: dashboardHistoryScanLimit })).map((address) => ({
+        return (await this.repo.listDepositAddresses({ merchantId: this.ownerAccountId, limit: dashboardHistoryScanLimit })).map((address) => ({
           id: address.id,
           merchantId: address.merchantId,
           network: address.network,
@@ -392,22 +392,22 @@ export class DashboardService {
           createdAt: address.createdAt.toISOString()
         }));
       case "deposits":
-        return (await this.repo.listTransfersForMerchant(this.ownerMerchantId, { limit: dashboardHistoryScanLimit })).map(publicTransferForDashboard);
+        return (await this.repo.listTransfersForMerchant(this.ownerAccountId, { limit: dashboardHistoryScanLimit })).map(publicTransferForDashboard);
       case "walletTransactions":
         return (await this.repo.listWalletTransactions(dashboardHistoryScanLimit))
-          .filter((transaction) => transaction.merchantId === this.ownerMerchantId || transaction.merchantId === null)
+          .filter((transaction) => transaction.merchantId === this.ownerAccountId || transaction.merchantId === null)
           .map(publicWalletTransaction);
       case "gasTopUps":
         return (await this.repo.listGasTopUps(dashboardHistoryScanLimit))
-          .filter((topUp) => topUp.merchantId === this.ownerMerchantId)
+          .filter((topUp) => topUp.merchantId === this.ownerAccountId)
           .map(publicGasTopUp);
       case "sweeps":
         return (await this.repo.listSweeps(dashboardHistoryScanLimit))
-          .filter((sweep) => sweep.merchantId === this.ownerMerchantId)
+          .filter((sweep) => sweep.merchantId === this.ownerAccountId)
           .map(publicSweep);
       case "webhooks":
         return (await this.repo.listWebhookEvents(dashboardHistoryScanLimit))
-          .filter((event) => event.merchantId === this.ownerMerchantId)
+          .filter((event) => event.merchantId === this.ownerAccountId)
           .map(publicWebhookEvent);
     }
   }

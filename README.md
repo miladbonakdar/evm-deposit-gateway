@@ -12,7 +12,7 @@ The v1 scope is stablecoin deposits plus admin-controlled treasury/gas wallet op
 
 ## Flow
 
-1. Dashboard automatically bootstraps the single owner account from `OWNER_MERCHANT_ID`.
+1. Dashboard automatically bootstraps the single internal owner account.
 2. Dashboard creates an API key and configures treasury/gas wallets for that owner.
 3. Your application calls `POST /v1/deposit-addresses` with HMAC-signed headers and a per-deposit callback URL/secret.
 4. API generates an encrypted temporary wallet and returns the public address plus optional QR output.
@@ -105,7 +105,6 @@ Required:
 - `ADMIN_SESSION_SECRET`
 - `ENCRYPTION_MASTER_KEY_BASE64`, a 32-byte base64 key
 - `NETWORK_CONFIG_PATH`, usually `config/networks.local.json` or `config/networks.testnet.local.json`
-- `OWNER_MERCHANT_ID` and `OWNER_MERCHANT_NAME`, used by the single-owner dashboard flow
 
 Business settings such as token contracts, decimals, confirmations, scan windows, and gas thresholds live in JSON:
 
